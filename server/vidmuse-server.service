@@ -1,0 +1,37 @@
+[Unit]
+Description=VidMuse Local Server — AI Music Video Generator
+After=network.target ollama.service comfyui.service
+Wants=ollama.service comfyui.service
+
+[Service]
+Type=simple
+User=vidmuse
+Group=vidmuse
+WorkingDirectory=/opt/vidmuse
+
+# Main executable (built with PyInstaller)
+ExecStart=/opt/vidmuse/vidmuse-server
+
+# Environment variables
+Environment="OLLAMA_URL=http://localhost:11434"
+Environment="COMFYUI_URL=http://localhost:8188"
+Environment="SERVER_HOST=0.0.0.0"
+Environment="SERVER_PORT=8000"
+Environment="OUTPUT_DIR=/opt/vidmuse/outputs"
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vidmuse-server
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=60s
+StartLimitBurst=3
+
+# Resource limits (adjust for B70)
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

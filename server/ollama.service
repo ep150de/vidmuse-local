@@ -1,0 +1,15 @@
+[Unit]
+Description=Ollama LLM Server
+After=network.target
+
+[Service]
+Type=simple
+User=ollama
+Group=ollama
+ExecStart=/usr/local/bin/ollama serve
+Environment="OLLAMA_HOST=0.0.0.0:11434"
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=ComfyUI Image/Video Generation Server
+After=network.target
+
+[Service]
+Type=simple
+User=vidmuse
+Group=vidmuse
+WorkingDirectory=/opt/comfyui
+ExecStart=/opt/comfyui/.venv/bin/python main.py --listen 0.0.0.0 --port 8188
+Environment="PYTORCH_ENABLE_MPS_FALLBACK=1"
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
