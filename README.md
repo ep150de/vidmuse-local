@@ -56,3 +56,17 @@ VITE_SERVER_URL=http://localhost:8000 npm run dev
 ## License
 
 MIT — Private repository, not for distribution without permission.
+
+
+## Windows Installer (Easy Mode)
+
+For non-technical users, download the pre-built Windows installer:
+
+```bash
+vidmuse-local-setup.exe
+```
+
+Run the installer wizard — it sets up everything with desktop shortcuts.
+
+See [WINDOWS_BUILD.md](WINDOWS_BUILD.md) to build your own installer.
+

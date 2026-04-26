@@ -1,25 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""
-PyInstaller spec for VidMuse Local Server
-Builds a single executable for the B70 workstation
-"""
 
-block_cipher = None
-
-# Main script
 a = Analysis(
-    ['main.py'],
+    ['../server/main.py'],
     pathex=[],
     binaries=[],
     datas=[
-        # Include workflow JSON files
-        ('workflows', 'workflows'),
-        # Include any static assets
+        ('../server/requirements.txt', '.'),
         ('../README.md', '.'),
+        ('../docker-compose.yml', '.'),
     ],
     hiddenimports=[
-        # FastAPI / Starlette
-        'fastapi',
         'uvicorn',
         'uvicorn.logging',
         'uvicorn.loops',
@@ -31,93 +21,39 @@ a = Analysis(
         'uvicorn.protocols.websockets.auto',
         'uvicorn.lifespan',
         'uvicorn.lifespan.on',
-        # Pydantic
-        'pydantic',
-        'pydantic.deprecated',
-        # Audio libs
-        'librosa',
-        'librosa.core',
-        'librosa.feature',
-        'librosa.beat',
-        'soundfile',
-        'audioread',
-        # NumPy/SciPy stack
-        'numpy',
-        'scipy',
-        'scipy.fft',
-        # WebSocket
         'websockets',
         'websockets.legacy',
-        'websockets.legacy.server',
-        'websockets.legacy.protocol',
-        # HTTP client
-        'requests',
-        'urllib3',
-        # Standard lib modules that might be lazily imported
-        'email.mime',
-        'email.mime.text',
-        'email.mime.multipart',
-        'email.mime.base',
-        'email.generator',
-        'email.header',
-        'email.utils',
-        'json',
-        'asyncio',
-        'pathlib',
-        'tempfile',
-        'shutil',
-        'uuid',
-        'datetime',
-        'typing',
-        'collections',
-        'collections.abc',
-        'functools',
-        'itertools',
-        'math',
-        'random',
-        'hashlib',
-        'base64',
-        'io',
-        'warnings',
-        'inspect',
-        'importlib',
-        'importlib.metadata',
+        'websockets.legacy.client',
+        'librosa',
+        'soundfile',
+        'soundfile._soundfile',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Exclude heavy things we don't need bundled
         'matplotlib',
         'tkinter',
-        'PyQt5',
-        'PyQt6',
-        'PySide2',
-        'PySide6',
-        'wx',
-        'IPython',
-        'jupyter',
-        'notebook',
-        'pytest',
-        'pylint',
-        'black',
-        'mypy',
-        'sphinx',
+        'test',
+        'unittest',
+        'email',
+        'http',
+        'xml',
+        'logging',
+        'pydoc',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
-    cipher=block_cipher,
+    cipher=None,
     noarchive=False,
 )
 
-# Remove duplicate libs
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
-    a.zipfiles,
     a.datas,
     [],
     name='vidmuse-server',
@@ -133,6 +69,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # Icon for the executable
-    icon='icon.ico',
+    icon='../assets/icon.ico',
 )
