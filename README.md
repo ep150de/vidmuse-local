@@ -10,6 +10,26 @@ Client/server split over LAN:
 
 ## Quick Start
 
+
+## Docker Deployment (Recommended)
+
+The fastest way to get VidMuse Local running is with Docker Compose:
+
+```bash
+# Start all services (Ollama + ComfyUI + Server)
+docker compose up -d
+
+# Pull Ollama model
+docker exec vidmuse-ollama ollama pull qwen2.5:32b
+
+# Start the client (in another terminal)
+cd client
+npm install
+VITE_SERVER_URL=http://localhost:8000 npm run dev
+```
+
+See [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md) for complete setup instructions, GPU configuration, and production tips.
+
 ### Server
 ```bash
 cd server

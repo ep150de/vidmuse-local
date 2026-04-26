@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # Ollama LLM server
+  ollama:
+    image: ollama/ollama:latest
+    container_name: vidmuse-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ComfyUI image/video generation
+  comfyui:
+    image: comfyanonymous/comfyui:latest
+    container_name: vidmuse-comfyui
+    ports:
+      - "8188:8188"
+    volumes:
+      - ./ComfyUI:/root/comfyui
+      - models:/root/comfyui/models
+      - outputs:/root/comfyui/outputs
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # VidMuse FastAPI server
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: vidmuse-server
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./server:/app
+      - ./outputs:/app/outputs
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - COMFYUI_URL=http://comfyui:8188
+      - OUTPUT_DIR=/app/outputs
+      - SERVER_HOST=0.0.0.0
+    depends_on:
+      - ollama
+      - comfyui
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  ollama:
+  models:
+  outputs:
+
+networks:
+  default:
+    name: vidmuse-network
