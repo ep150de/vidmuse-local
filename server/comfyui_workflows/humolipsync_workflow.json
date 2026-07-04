@@ -1,0 +1,105 @@
+{
+  "name": "HuMo Lip-Sync",
+  "description": "HuMo model workflow for high-quality lip-sync video generation. Synchronizes mouth movement in video to audio track for realistic talking-head or character animation.",
+  "version": "1.0",
+  "requires": {
+    "humod_model": "HuMo checkpoint (humod.safetensors)",
+    "audio_input": "Audio track for lip-sync reference",
+    "video_input": "Source video with face/talking head",
+    "vital_model": "Vital checkpoint for face detail (optional)",
+    "comfyui_custom_nodes": [
+      "ComfyUI-HuMo",
+      "ComfyUI-AudioSync",
+      "ComfyUI-Frame-Interpolation"
+    ]
+  },
+  "workflow": {
+    "1": {
+      "inputs": {
+        "ckpt_name": "humod.safetensors",
+        "vae_name": "humod_vae.safetensors"
+      },
+      "class_type": "CheckpointLoaderSimple"
+    },
+    "2": {
+      "inputs": {
+        "text": "high quality talking face, realistic mouth movement, natural lip-sync",
+        "clip": ["1", 0]
+      },
+      "class_type": "CLIPTextEncode"
+    },
+    "3": {
+      "inputs": {
+        "text": "",
+        "clip": ["1", 0]
+      },
+      "class_type": "CLIPTextEncode"
+    },
+    "4": {
+      "inputs": {
+        "seed": 0,
+        "steps": 30,
+        "cfg": 4.5,
+        "sampler_name": "dpmpp_2m",
+        "scheduler": "karras",
+        "denoise": 0.85,
+        "model": ["1", 0],
+        "positive": ["2", 0],
+        "negative": ["3", 0],
+        "latent_image": ["10", 0]
+      },
+      "class_type": "KSampler"
+    },
+    "5": {
+      "inputs": {
+        "samples": ["4", 0],
+        "vae": ["1", 1]
+      },
+      "class_type": "VAEDecode"
+    },
+    "6": {
+      "inputs": {
+        "filename_prefix": "vidmuse_humo",
+        "images": ["5", 0]
+      },
+      "class_type": "SaveImage"
+    },
+    "10": {
+      "inputs": {
+        "width": 512,
+        "height": 512,
+        "batch_size": 1
+      },
+      "class_type": "EmptyLatentImage"
+    },
+    "11": {
+      "inputs": {
+        "audio_path": "",
+        "video_path": "",
+        "sync_strength": 0.8
+      },
+      "class_type": "HuMoLipSyncProcessor"
+    },
+    "12": {
+      "inputs": {
+        "frame_interpolation_factor": 2,
+        "method": "rife"
+      },
+      "class_type": "FrameInterpolation"
+    },
+    "13": {
+      "inputs": {
+        "video_path": ["12", 0],
+        "audio_path": ["11", 1],
+        "fps": 24
+      },
+      "class_type": "VideoMerge"
+    }
+  },
+  "usage": {
+    "audio_input": "Path to MP3 audio for lip-sync reference",
+    "video_input": "Path to source video (talking face or character)",
+    "strength": "Lip-sync strength (0.0-1.0), default 0.8",
+    "output": "Lip-synced video with synchronized mouth movement"
+  }
+}

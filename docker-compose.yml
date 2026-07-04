@@ -1,16 +1,30 @@
 version: '3.8'
 
 services:
-  # Ollama LLM server
-  ollama:
-    image: ollama/ollama:latest
-    container_name: vidmuse-ollama
+  # VidMuse FastAPI server with llama.cpp + Intel XPU support
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: vidmuse-server
     ports:
-      - "11434:11434"
+      - "8000:8000"
     volumes:
-      - ollama:/root/.ollama
+      - ./server:/app
+      - ./outputs:/app/outputs
+      - ./models:/app/models  # GGUF models
+      - ./ComfyUI:/root/comfyui  # ComfyUI models (CUDA)
+      - ./comfyui-xpu:/app/comfyui-xpu  # Intel XPU ComfyUI (if installed)
+      - ./comfyui_workflows:/app/comfyui_workflows  # Workflow definitions
     environment:
-      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_URL=http://host.docker.internal:11434  # fallback to Ollama
+      - COMFYUI_URL=http://host.docker.internal:8188
+      - OUTPUT_DIR=/app/outputs
+      - SERVER_HOST=0.0.0.0
+      - GGUF_MODEL_PATH=/app/models/  # llama.cpp model directory
+      - XPU_AVAILABLE=false  # Set to true if Intel XPU detected
+    depends_on:
+      - comfyui
     restart: unless-stopped
     deploy:
       resources:
@@ -41,36 +55,7 @@ services:
               count: all
               capabilities: [gpu]
 
-  # VidMuse FastAPI server
-  server:
-    build:
-      context: ./server
-      dockerfile: Dockerfile
-    container_name: vidmuse-server
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./server:/app
-      - ./outputs:/app/outputs
-    environment:
-      - OLLAMA_URL=http://ollama:11434
-      - COMFYUI_URL=http://comfyui:8188
-      - OUTPUT_DIR=/app/outputs
-      - SERVER_HOST=0.0.0.0
-    depends_on:
-      - ollama
-      - comfyui
-    restart: unless-stopped
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
 volumes:
-  ollama:
   models:
   outputs:
 

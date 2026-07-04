@@ -1,5 +1,5 @@
 @echo off
-REM Build Windows Installer for VidMuse Local
+REM Build Windows Installer for VidMuse Local (v2 — with llama.cpp)
 echo Building VidMuse Local Windows installer...
 cd server
 pyinstaller vidmuse-server.spec --clean
