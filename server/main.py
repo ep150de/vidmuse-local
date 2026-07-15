@@ -32,8 +32,17 @@ from server.image_generator import ComfyUIClient
 from server.video_editor import VideoEditor
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
+try:
+    from dotenv import load_dotenv
+    from pathlib import Path as _P
+    load_dotenv(_P(__file__).resolve().parents[1] / ".env")
+    load_dotenv(_P(__file__).resolve().parent / ".env", override=True)
+except ImportError:
+    pass
+
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 COMFYUI_URL = os.getenv("COMFYUI_URL", "http://localhost:8188")
+VIDMUSE_MODE = (os.getenv("VIDMUSE_MODE") or "local").strip().lower()
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("SERVER_PORT", 8000))
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/tmp/vidmuse/outputs"))
@@ -132,13 +141,12 @@ async def health():
         llm_status = await health_check_all()
     services["llm"] = llm_status
 
-    # Check ComfyUI
+    # Check ComfyUI / Comfy Cloud
     try:
-        import requests
-        resp = requests.get(f"{COMFYUI_URL}/system_stats", timeout=5)
-        services["comfyui"] = {"status": "up"}
-    except Exception:
-        services["comfyui"] = {"status": "down"}
+        from server.image_generator import ComfyUIClient
+        services["comfyui"] = await ComfyUIClient().health_check()
+    except Exception as exc:
+        services["comfyui"] = {"status": "down", "error": str(exc)}
 
     # Check disk space
     import shutil
@@ -149,12 +157,14 @@ async def health():
         "free_gb": round(disk.free / (1024**3), 1),
     }
 
+    mode = VIDMUSE_MODE
     return {
-        "status": "healthy" if services["comfyui"]["status"] == "up" else "degraded",
+        "status": "healthy" if services["comfyui"].get("status") in ("up", "auth_required") else "degraded",
+        "mode": mode,
         "services": services,
-        "gpu": "Intel Arc Pro B70",
-        "vram_gb": 32,
-        "version": "2.0.0",
+        "gpu": "cloud" if mode == "cloud" else "Intel Arc Pro B70",
+        "vram_gb": None if mode == "cloud" else 32,
+        "version": "2.1.0",
     }
 
 @app.get("/api/llm/status")

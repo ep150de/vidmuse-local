@@ -21,19 +21,46 @@ from typing import Any, Dict, List, Optional
 
 import aiohttp
 
-COMFYUI_URL = os.getenv("COMFYUI_URL", "http://localhost:8188")
+COMFYUI_URL = os.getenv("COMFYUI_URL", "http://localhost:8188").rstrip("/")
+COMFY_CLOUD_URL = os.getenv("COMFY_CLOUD_URL", "https://cloud.comfy.org").rstrip("/")
+COMFY_CLOUD_API_KEY = os.getenv("COMFY_CLOUD_API_KEY")
+COMFYUI_BACKEND = (os.getenv("COMFYUI_BACKEND") or "").strip().lower()
+VIDMUSE_MODE = (os.getenv("VIDMUSE_MODE") or "local").strip().lower()
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/tmp/vidmuse/outputs"))
 
 # ComfyUI workflow definitions directory
 WORKFLOWS_DIR = Path(__file__).parent / "comfyui_workflows"
 
 
+def _resolve_comfy_config():
+    """Return (base_url, api_key, backend_label)."""
+    backend = COMFYUI_BACKEND or ("cloud" if VIDMUSE_MODE == "cloud" else "local")
+    if backend == "cloud":
+        return COMFY_CLOUD_URL, COMFY_CLOUD_API_KEY, "cloud"
+    return COMFYUI_URL, None, "local"
+
+
 class ComfyUIClient:
-    """Async client for ComfyUI's HTTP + WebSocket API."""
+    """Async client for ComfyUI's HTTP + WebSocket API (local or Comfy Cloud)."""
 
     def __init__(self):
-        self.url = COMFYUI_URL
+        self.url, self.api_key, self.backend = _resolve_comfy_config()
         self.client_id = str(uuid.uuid4())
+
+    def _headers(self) -> Dict[str, str]:
+        headers: Dict[str, str] = {}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        return headers
+
+    def _prompt_payload(self, workflow: Dict[str, Any]) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "prompt": workflow,
+            "client_id": self.client_id,
+        }
+        if self.backend == "cloud" and self.api_key:
+            payload["extra_data"] = {"api_key_comfy_org": self.api_key}
+        return payload
 
     # ── text-to-image (z-image turbo) ────────────────────────────────────
 
@@ -217,49 +244,46 @@ class ComfyUIClient:
 
         Returns the path to the generated file, or None on failure.
         """
-        async with aiohttp.ClientSession() as session:
-            # Submit prompt
-            submit_url = f"{self.url}/prompt"
-            async with session.post(submit_url, json={
-                "prompt": workflow,
-                "client_id": self.client_id,
-            }) as resp:
-                if resp.status != 200:
-                    return None
-                data = await resp.json()
-                prompt_id = data.get("prompt_id")
+        headers = self._headers()
+        payload = self._prompt_payload(workflow)
+        async with aiohttp.ClientSession(headers=headers) as session:
+            # Prefer /api/prompt (Comfy Cloud); fall back to /prompt (local)
+            submit_urls = [f"{self.url}/api/prompt", f"{self.url}/prompt"]
+            prompt_id = None
+            for submit_url in submit_urls:
+                async with session.post(submit_url, json=payload) as resp:
+                    if resp.status == 404:
+                        continue
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    prompt_id = data.get("prompt_id")
+                    break
 
             if not prompt_id:
                 return None
 
-            # Poll for completion via WebSocket
-            ws_url = self.url.replace("http://", "ws://") + "/ws/" + self.client_id
-            output_path = None
+            # Poll history (more reliable across local + cloud than WS alone)
             start = time.time()
-
-            async with aiohttp.ClientSession().ws_connect(ws_url) as ws:
-                while True:
-                    elapsed = time.time() - start
-                    if elapsed > wait_timeout:
-                        break
-
+            while time.time() - start < wait_timeout:
+                for hist_path in (f"/api/history/{prompt_id}", f"/history/{prompt_id}"):
                     try:
-                        msg = await asyncio.wait_for(ws.recv(), timeout=2.0)
-                        if isinstance(msg, str):
-                            data = json.loads(msg)
-                            if data.get("type") == "executing":
-                                if data.get("data", {}).get("node") is None:
-                                    # Execution done
-                                    break
-                        elif data.get("type") == "executed":
-                            output_path = self._parse_output(data)
-                    except asyncio.TimeoutError:
-                        continue
+                        async with session.get(f"{self.url}{hist_path}") as resp:
+                            if resp.status == 404:
+                                continue
+                            history = await resp.json()
+                            entry = history.get(prompt_id) if prompt_id in history else history
+                            if entry and (entry.get("outputs") or entry.get("output")):
+                                # Normalize output key
+                                if "output" not in entry and "outputs" in entry:
+                                    entry = {**entry, "output": entry["outputs"]}
+                                path = self._parse_output(entry)
+                                if path:
+                                    return path
                     except Exception:
                         continue
+                await asyncio.sleep(2)
 
-            if output_path:
-                return output_path
             return None
 
     async def _dispatch_workflow_sync(
@@ -269,30 +293,43 @@ class ComfyUIClient:
     ) -> Optional[str]:
         """Sync-compatible dispatch (for non-async contexts)."""
         import requests
-        # Submit
-        resp = requests.post(
-            f"{self.url}/prompt",
-            json={"prompt": workflow, "client_id": self.client_id},
-            timeout=30,
-        )
-        if resp.status_code != 200:
+
+        headers = self._headers()
+        payload = self._prompt_payload(workflow)
+        resp = None
+        for path in ("/api/prompt", "/prompt"):
+            resp = requests.post(
+                f"{self.url}{path}",
+                headers=headers,
+                json=payload,
+                timeout=30,
+            )
+            if resp.status_code != 404:
+                break
+        if resp is None or resp.status_code != 200:
             return None
         prompt_id = resp.json().get("prompt_id")
 
         if not prompt_id:
             return None
 
-        # Poll
         start = time.time()
         while time.time() - start < wait_timeout:
             try:
-                status_resp = requests.get(
-                    f"{self.url}/history/{prompt_id}", timeout=5
-                )
-                history = status_resp.json()
-                if prompt_id in history:
-                    output_path = self._parse_output(history[prompt_id])
-                    return output_path
+                for path in (f"/api/history/{prompt_id}", f"/history/{prompt_id}"):
+                    status_resp = requests.get(
+                        f"{self.url}{path}", headers=headers, timeout=5
+                    )
+                    if status_resp.status_code == 404:
+                        continue
+                    history = status_resp.json()
+                    entry = history.get(prompt_id) if prompt_id in history else history
+                    if entry:
+                        if "output" not in entry and "outputs" in entry:
+                            entry = {**entry, "output": entry["outputs"]}
+                        output_path = self._parse_output(entry)
+                        if output_path:
+                            return output_path
             except Exception:
                 pass
             await asyncio.sleep(3)
@@ -691,27 +728,34 @@ class ComfyUIClient:
 
     async def health_check(self) -> Dict[str, Any]:
         """Check ComfyUI availability and backend type."""
-        backend = self.backend_type
+        backend = self.backend
         result = {
             "status": "down",
             "backend": backend,
             "url": self.url,
+            "auth": bool(self.api_key),
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.url}/system_stats") as resp:
-                    if resp.status == 200:
-                        result["status"] = "up"
-                        data = await resp.json()
-                        result["gpu"] = data.get("gpu", {})
-                        result["free_memory"] = data.get("free_memory", {})
-                    else:
-                        # Try /prompt as fallback
-                        async with session.post(f"{self.url}/prompt", json={
-                            "prompt": {},
-                            "client_id": self.client_id,
-                        }) as resp2:
+            async with aiohttp.ClientSession(headers=self._headers()) as session:
+                probe = (
+                    f"{self.url}/api/user"
+                    if backend == "cloud"
+                    else f"{self.url}/system_stats"
+                )
+                async with session.get(probe) as resp:
+                    if resp.status in (200, 401, 403):
+                        # 401/403 still means endpoint is reachable when key missing
+                        result["status"] = "up" if resp.status == 200 else "auth_required"
+                        if resp.status == 200 and backend != "cloud":
+                            data = await resp.json()
+                            result["gpu"] = data.get("gpu", {})
+                            result["free_memory"] = data.get("free_memory", {})
+                    elif backend != "cloud":
+                        async with session.post(
+                            f"{self.url}/prompt",
+                            json={"prompt": {}, "client_id": self.client_id},
+                        ) as resp2:
                             if resp2.status == 200:
                                 result["status"] = "up"
         except Exception as e:

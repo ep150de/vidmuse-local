@@ -2,10 +2,19 @@
 
 ## Prerequisites
 
-- Docker Engine 24+ with NVIDIA Container Toolkit
-- NVIDIA GPU with drivers installed
-- At least 32GB free disk space for models
-- GGUF model for llama.cpp (recommended)
+- Docker Engine 24+ with NVIDIA Container Toolkit (local GPU mode)
+- NVIDIA GPU with drivers installed (local mode)
+- At least 32GB free disk space for models (local mode)
+- GGUF model for llama.cpp (recommended for local mode)
+
+For Chromebook / no-GPU **cloud** mode (Ollama Cloud + Comfy Cloud):
+
+```bash
+./setup   # or setup.bat on Windows
+docker compose -f docker-compose.cloud.yml up -d --build
+```
+
+See the README cloud quick start for API keys.
 
 ## Quick Start
 

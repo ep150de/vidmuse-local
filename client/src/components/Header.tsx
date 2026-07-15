@@ -1,13 +1,21 @@
-import { Cpu, Wifi, WifiOff } from "lucide-react";
+import { Cloud, Cpu, Wifi, WifiOff } from "lucide-react";
 
 interface Props {
   serverHealth: any;
 }
 
 export function Header({ serverHealth }: Props) {
-  const isOnline = serverHealth?.status === "healthy";
+  const isOnline = serverHealth?.status === "healthy" || serverHealth?.status === "degraded";
+  const mode = serverHealth?.mode || "local";
   const gpu = serverHealth?.gpu || "Unknown";
-  const vram = serverHealth?.vram_gb || "?";
+  const vram = serverHealth?.vram_gb;
+  const llm = serverHealth?.services?.llm?.backend || serverHealth?.services?.llm?.name;
+  const comfy = serverHealth?.services?.comfyui?.backend;
+
+  const resourceLabel =
+    mode === "cloud"
+      ? `Cloud · LLM ${llm || "?"} · Comfy ${comfy || "?"}`
+      : `${gpu}${vram != null ? ` (${vram}GB)` : ""}`;
 
   return (
     <header className="border-b border-gray-800 bg-[#0b0f2d]/80 backdrop-blur">
@@ -16,13 +24,24 @@ export function Header({ serverHealth }: Props) {
           <div className="w-8 h-8 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg flex items-center justify-center">
             <span className="font-bold text-white text-sm">VM</span>
           </div>
-          <span className="font-bold text-lg">VidMuse Local</span>
+          <div className="flex flex-col">
+            <span className="font-bold text-lg leading-tight">VidMuse</span>
+            <span className="text-[10px] uppercase tracking-wider text-gray-500">
+              {mode} mode
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-4 text-xs">
           <div className="flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-gray-400" />
-            <span className="text-gray-400">{gpu} ({vram}GB)</span>
+            {mode === "cloud" ? (
+              <Cloud className="w-4 h-4 text-cyan-400" />
+            ) : (
+              <Cpu className="w-4 h-4 text-gray-400" />
+            )}
+            <span className="text-gray-400 max-w-[280px] truncate" title={resourceLabel}>
+              {resourceLabel}
+            </span>
           </div>
           <div className="flex items-center gap-2">
             {isOnline ? (

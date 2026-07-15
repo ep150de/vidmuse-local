@@ -1,5 +1,19 @@
 # Building Windows Installer for VidMuse Local
 
+## First-time config (any Windows PC)
+
+Use the quick setup wizard to choose **local vs cloud** and save API keys:
+
+```cmd
+setup.bat
+```
+
+Optional dependency helper (Python / Node / FFmpeg via winget):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_deps_windows.ps1
+```
+
 ## Prerequisites
 - Python 3.11+
 - PyInstaller
@@ -27,6 +41,8 @@ Output: `vidmuse-local-setup.exe`
 - ComfyUI integration
 - GGUF model directory: `C:\Program Files\VidMuse Local\models\`
 - Desktop shortcuts
+
+Cloud mode (no local GPU) uses `docker-compose.cloud.yml` + `.env` from `setup.bat`.
 
 ## Distribution
 Upload `.exe` to GitHub Releases.

@@ -23,6 +23,12 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Secrets / setup
+.env
+.env.local
+.vidmuse-setup-complete
+server/.venv/
+
 # VidMuse outputs (large)
 outputs/
 *.mp4

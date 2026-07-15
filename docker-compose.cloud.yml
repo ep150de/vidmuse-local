@@ -1,0 +1,30 @@
+# Cloud / Chromebook profile — FastAPI only (no local Ollama or ComfyUI GPU services)
+# Usage:
+#   cp .env.example .env   # fill OLLAMA_API_KEY, OPENCODE_API_KEY, COMFY_CLOUD_API_KEY
+#   docker compose -f docker-compose.cloud.yml up -d --build
+
+version: "3.8"
+
+services:
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: vidmuse-server-cloud
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./server:/app
+      - ./outputs:/app/outputs
+    env_file:
+      - .env
+    environment:
+      - VIDMUSE_MODE=cloud
+      - OUTPUT_DIR=/app/outputs
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8000
+    restart: unless-stopped
+
+networks:
+  default:
+    name: vidmuse-cloud-network
