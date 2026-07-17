@@ -15,7 +15,8 @@ export function ChatInterface({ onConceptsReady }: Props) {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "agent",
-      content: "Hi! I'm your AI video director. I've analyzed your song — let me know what kind of video you're envisioning, and I'll help you create it. Want me to propose some concepts?",
+      content:
+        "Signal locked. I've analyzed your track — tell me the mood, or ask me to spit three video concepts.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -38,55 +39,84 @@ export function ChatInterface({ onConceptsReady }: Props) {
       const res = await api.chat(userMsg);
       setMessages((prev) => [...prev, { role: "agent", content: res.response }]);
 
-      // Auto-transition if concepts are mentioned
-      if (res.response.toLowerCase().includes("concept") && res.response.includes("1.")) {
+      if (
+        res.response.toLowerCase().includes("concept") &&
+        res.response.includes("1.")
+      ) {
         setTimeout(onConceptsReady, 2000);
       }
-    } catch (e) {
-      setMessages((prev) => [...prev, { role: "agent", content: "Sorry, I had trouble connecting to the server. Please try again." }]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "agent",
+          content: "Comms glitch — couldn't reach the director. Try again.",
+        },
+      ]);
     } finally {
       setIsTyping(false);
     }
   };
 
   return (
-    <div className="max-w-3xl mx-auto h-[70vh] flex flex-col">
+    <div className="max-w-3xl mx-auto h-[70vh] flex flex-col animate-rise">
       <div className="flex items-center gap-3 mb-4">
         <Bot className="w-6 h-6 text-cyan-400" />
-        <h2 className="text-xl font-bold">AI Video Director</h2>
-        <span className="text-xs bg-cyan-500/20 text-cyan-400 px-2 py-1 rounded-full">Phase: Ideation</span>
+        <h2 className="font-display text-lg tracking-wide">AI Video Director</h2>
+        <span className="text-[10px] uppercase tracking-widest border border-cyan-500/40 text-cyan-300 px-2 py-1">
+          Ideation
+        </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto space-y-4 mb-4 pr-2">
+      <div className="panel flex-1 overflow-y-auto space-y-4 mb-4 p-4">
         {messages.map((msg, i) => (
           <div
             key={i}
             className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}
           >
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-              msg.role === "agent" ? "bg-cyan-500/20" : "bg-gold-500/20"
-            }`}>
-              {msg.role === "agent" ? <Bot className="w-4 h-4 text-cyan-400" /> : <User className="w-4 h-4 text-gold-400" />}
+            <div
+              className={`w-8 h-8 flex items-center justify-center shrink-0 ${
+                msg.role === "agent" ? "bg-cyan-500/20" : "bg-gold-500/20"
+              }`}
+            >
+              {msg.role === "agent" ? (
+                <Bot className="w-4 h-4 text-cyan-400" />
+              ) : (
+                <User className="w-4 h-4 text-gold-400" />
+              )}
             </div>
-            <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${
-              msg.role === "agent"
-                ? "bg-[#1a1f3d] text-gray-200"
-                : "bg-cyan-500/20 text-cyan-100"
-            }`}>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</p>
+            <div
+              className={`max-w-[80%] px-4 py-3 ${
+                msg.role === "agent"
+                  ? "bg-navy-900/80 border border-cyan-500/20 text-slate-200"
+                  : "bg-cyan-500/15 border border-cyan-400/25 text-cyan-50"
+              }`}
+            >
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                {msg.content}
+              </p>
             </div>
           </div>
         ))}
         {isTyping && (
           <div className="flex gap-3">
-            <div className="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center">
+            <div className="w-8 h-8 bg-cyan-500/20 flex items-center justify-center">
               <Bot className="w-4 h-4 text-cyan-400" />
             </div>
-            <div className="bg-[#1a1f3d] rounded-2xl px-4 py-3">
+            <div className="bg-navy-900/80 border border-cyan-500/20 px-4 py-3">
               <div className="flex gap-1">
-                <div className="w-2 h-2 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                <div className="w-2 h-2 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                <div className="w-2 h-2 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                <div
+                  className="w-2 h-2 bg-cyan-400 rounded-full animate-bounce"
+                  style={{ animationDelay: "0ms" }}
+                />
+                <div
+                  className="w-2 h-2 bg-cyan-400 rounded-full animate-bounce"
+                  style={{ animationDelay: "150ms" }}
+                />
+                <div
+                  className="w-2 h-2 bg-cyan-400 rounded-full animate-bounce"
+                  style={{ animationDelay: "300ms" }}
+                />
               </div>
             </div>
           </div>
@@ -100,21 +130,23 @@ export function ChatInterface({ onConceptsReady }: Props) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-          placeholder="Describe your vision or ask for concepts..."
-          className="flex-1 bg-[#1a1f3d] border border-gray-600 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:border-cyan-400 focus:outline-none"
+          placeholder="Describe the vibe or ask for concepts…"
+          className="flex-1 bg-navy-900/80 border border-cyan-500/25 px-4 py-3 text-white placeholder:text-[var(--muted)] focus:border-cyan-400 focus:outline-none"
         />
         <button
+          type="button"
           onClick={sendMessage}
           disabled={isTyping || !input.trim()}
-          className="bg-cyan-500 hover:bg-cyan-400 text-black rounded-xl px-6 py-3 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="cta-primary px-5 py-3 disabled:opacity-40"
         >
           <Send className="w-5 h-5" />
         </button>
       </div>
 
       <button
+        type="button"
         onClick={onConceptsReady}
-        className="mt-4 flex items-center justify-center gap-2 text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
+        className="mt-4 flex items-center justify-center gap-2 text-sm text-gold-400 hover:text-gold-300 transition-colors"
       >
         <Sparkles className="w-4 h-4" />
         Skip to concept selection

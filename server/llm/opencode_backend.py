@@ -9,9 +9,9 @@ import requests
 
 from server.llm.base import LLMBackend
 
-OPENCODE_BASE_URL = os.getenv("OPENCODE_BASE_URL", "https://opencode.ai/zen/go/v1").rstrip("/")
-OPENCODE_MODEL = os.getenv("OPENCODE_MODEL", "deepseek-v4-flash")
-OPENCODE_API_KEY = os.getenv("OPENCODE_API_KEY")
+# Defaults only — always re-read env in __init__ so dotenv load order is safe.
+DEFAULT_OPENCODE_BASE_URL = "https://opencode.ai/zen/go/v1"
+DEFAULT_OPENCODE_MODEL = "deepseek-v4-flash"
 
 
 class OpenCodeGoBackend(LLMBackend):
@@ -19,14 +19,16 @@ class OpenCodeGoBackend(LLMBackend):
 
     def __init__(
         self,
-        model: str = OPENCODE_MODEL,
+        model: Optional[str] = None,
         api_key: Optional[str] = None,
-        base_url: str = OPENCODE_BASE_URL,
+        base_url: Optional[str] = None,
         timeout: int = 120,
     ):
-        self._model = model
-        self._api_key = api_key or OPENCODE_API_KEY
-        self._base_url = base_url.rstrip("/")
+        self._model = model or os.getenv("OPENCODE_MODEL") or DEFAULT_OPENCODE_MODEL
+        self._api_key = (api_key if api_key is not None else os.getenv("OPENCODE_API_KEY") or "").strip() or None
+        self._base_url = (
+            base_url or os.getenv("OPENCODE_BASE_URL") or DEFAULT_OPENCODE_BASE_URL
+        ).rstrip("/")
         self._timeout = timeout
 
     @property

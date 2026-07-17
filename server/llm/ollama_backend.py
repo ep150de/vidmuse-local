@@ -9,9 +9,8 @@ import requests
 
 from server.llm.base import LLMBackend
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:32b")
-OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_MODEL = "qwen2.5:32b"
 
 
 class CreditExhaustedError(RuntimeError):
@@ -23,14 +22,17 @@ class OllamaBackend(LLMBackend):
 
     def __init__(
         self,
-        model: str = OLLAMA_MODEL,
+        model: Optional[str] = None,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         timeout: int = 120,
     ):
-        self._model = model
-        self._base_url = (base_url or OLLAMA_URL).rstrip("/")
-        self._api_key = api_key if api_key is not None else OLLAMA_API_KEY
+        self._model = model or os.getenv("OLLAMA_MODEL") or DEFAULT_OLLAMA_MODEL
+        self._base_url = (
+            base_url or os.getenv("OLLAMA_URL") or DEFAULT_OLLAMA_URL
+        ).rstrip("/")
+        key = api_key if api_key is not None else os.getenv("OLLAMA_API_KEY")
+        self._api_key = (key or "").strip() or None
         self._timeout = timeout
 
     @property

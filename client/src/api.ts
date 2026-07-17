@@ -1,5 +1,26 @@
 // VidMuse Local — API Client
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://192.168.1.100:8000";
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:8000";
+
+async function parseJson(res: Response): Promise<any> {
+  let data: any = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    const detail =
+      (typeof data?.detail === "string" && data.detail) ||
+      data?.error ||
+      res.statusText ||
+      `HTTP ${res.status}`;
+    throw new Error(detail);
+  }
+  if (data?.error) {
+    throw new Error(String(data.error));
+  }
+  return data;
+}
 
 class VidMuseAPI {
   private ws: WebSocket | null = null;
@@ -8,7 +29,7 @@ class VidMuseAPI {
 
   async createSession(): Promise<string> {
     const res = await fetch(`${SERVER_URL}/api/session/create`, { method: "POST" });
-    const data = await res.json();
+    const data = await parseJson(res);
     this.sessionId = data.session_id;
     this.connectWebSocket(data.session_id);
     return data.session_id;
@@ -34,7 +55,7 @@ class VidMuseAPI {
     form.append("session_id", this.sessionId);
     form.append("file", file);
     const res = await fetch(`${SERVER_URL}/api/upload/audio`, { method: "POST", body: form });
-    return res.json();
+    return parseJson(res);
   }
 
   async uploadImages(files: File[]): Promise<any> {
@@ -43,7 +64,7 @@ class VidMuseAPI {
     form.append("session_id", this.sessionId);
     files.forEach((f) => form.append("files", f));
     const res = await fetch(`${SERVER_URL}/api/upload/images`, { method: "POST", body: form });
-    return res.json();
+    return parseJson(res);
   }
 
   async chat(message: string): Promise<any> {
@@ -53,7 +74,7 @@ class VidMuseAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: this.sessionId, message }),
     });
-    return res.json();
+    return parseJson(res);
   }
 
   async generateConcepts(): Promise<any> {
@@ -63,7 +84,7 @@ class VidMuseAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: this.sessionId }),
     });
-    return res.json();
+    return parseJson(res);
   }
 
   async selectConcept(index: number): Promise<any> {
@@ -73,7 +94,7 @@ class VidMuseAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: this.sessionId, concept_index: index }),
     });
-    return res.json();
+    return parseJson(res);
   }
 
   async generateStoryboard(): Promise<any> {
@@ -83,7 +104,7 @@ class VidMuseAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: this.sessionId }),
     });
-    return res.json();
+    return parseJson(res);
   }
 
   async generateStoryboardImages(): Promise<any> {
@@ -93,7 +114,7 @@ class VidMuseAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: this.sessionId }),
     });
-    return res.json();
+    return parseJson(res);
   }
 
   async approveStoryboard(approvedFrames: string[]): Promise<any> {
@@ -103,7 +124,7 @@ class VidMuseAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: this.sessionId, approved_frames: approvedFrames }),
     });
-    return res.json();
+    return parseJson(res);
   }
 
   async generateVideo(): Promise<any> {
@@ -113,7 +134,7 @@ class VidMuseAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: this.sessionId }),
     });
-    return res.json();
+    return parseJson(res);
   }
 
   async editFinal(): Promise<any> {
@@ -123,7 +144,7 @@ class VidMuseAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: this.sessionId }),
     });
-    return res.json();
+    return parseJson(res);
   }
 
   getDownloadUrl(): string {
@@ -133,8 +154,16 @@ class VidMuseAPI {
 
   async healthCheck(): Promise<any> {
     const res = await fetch(`${SERVER_URL}/api/health`);
-    return res.json();
+    return parseJson(res);
   }
 }
 
 export const api = new VidMuseAPI();
+
+/** Build a full URL for session assets or API paths returned by the server. */
+export function mediaUrl(path: string): string {
+  if (!path) return "";
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  if (path.startsWith("/")) return `${SERVER_URL}${path}`;
+  return `${SERVER_URL}/${path}`;
+}

@@ -10,12 +10,29 @@ New architecture (v2):
 """
 
 import os
+from pathlib import Path
+
+# Load .env BEFORE importing LLM backends (they read API keys at import/init).
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+    load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
+except ImportError:
+    pass
+
+# SciPy 1.15+ removed scipy.signal.hann — patch before any librosa import chain.
+import scipy.signal  # noqa: E402
+import scipy.signal.windows as _scipy_windows  # noqa: E402
+
+scipy.signal.hann = getattr(scipy.signal, "hann", None) or _scipy_windows.hann  # type: ignore[attr-defined]
+scipy.signal.hanning = getattr(scipy.signal, "hanning", None) or _scipy_windows.hann  # type: ignore[attr-defined]
+
 import uuid
 import asyncio
 import tempfile
 import shutil
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, UploadFile, File, Form, WebSocket, WebSocketDisconnect, HTTPException
@@ -25,21 +42,19 @@ from pydantic import BaseModel
 
 # ─── Imports from new modules ───────────────────────────────────────────
 from server.llm.base import LLMBackend
-from server.llm.llm_factory import create_llm_backend, health_check_all, set_active_backend
+from server.llm.llm_factory import (
+    create_llm_backend,
+    health_check_all,
+    set_active_backend,
+    friendly_llm_error,
+)
+from server.llm.ollama_backend import CreditExhaustedError
 from server.director.hermes_director import HermesDirector
 from server.audio_analyzer import AudioAnalyzer
 from server.image_generator import ComfyUIClient
 from server.video_editor import VideoEditor
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-try:
-    from dotenv import load_dotenv
-    from pathlib import Path as _P
-    load_dotenv(_P(__file__).resolve().parents[1] / ".env")
-    load_dotenv(_P(__file__).resolve().parent / ".env", override=True)
-except ImportError:
-    pass
-
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 COMFYUI_URL = os.getenv("COMFYUI_URL", "http://localhost:8188")
 VIDMUSE_MODE = (os.getenv("VIDMUSE_MODE") or "local").strip().lower()
@@ -65,8 +80,35 @@ connected_clients: Dict[str, WebSocket] = {}
 # Active pipeline instances: session_id -> HermesDirector
 active_directors: Dict[str, HermesDirector] = {}
 
-# LLM backend (set at startup)
+# Legacy interactive session state (client UI flow)
+legacy_sessions: Dict[str, Dict[str, Any]] = {}
+
+# LLM backend (set at startup / import)
 llm_backend: Optional[LLMBackend] = None
+
+
+def _init_llm_backend() -> Optional[LLMBackend]:
+    """Create and register the active LLM backend once."""
+    global llm_backend
+    if llm_backend is not None:
+        return llm_backend
+    backend = create_llm_backend()
+    llm_backend = backend
+    if backend is not None:
+        set_active_backend(backend)
+    return backend
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    backend = _init_llm_backend()
+    if backend:
+        print(f"[VidMuse] LLM backend: {backend.name} ({backend.model_name})")
+    else:
+        print(
+            "[VidMuse] WARNING: No LLM backend available. "
+            "For cloud mode set OLLAMA_API_KEY; for local install llama-cpp-python or start Ollama."
+        )
 
 # ─── MODELS ─────────────────────────────────────────────────────────────
 
@@ -244,38 +286,365 @@ async def start_pipeline(request: dict):
         **result,
     }
 
-# ─── LEGACY ENDPOINTS (backward compat) ─────────────────────────────────
+# ─── LEGACY ENDPOINTS (backward compat for client UI) ───────────────────
 
 @app.post("/api/session/create")
 async def create_session():
     """Create a new video generation session (legacy)."""
     session_id = str(uuid.uuid4())
+    legacy_sessions[session_id] = {
+        "session_id": session_id,
+        "status": "created",
+        "chat_history": [],
+        "audio_path": None,
+        "audio_analysis": None,
+        "reference_images": [],
+        "concepts": [],
+        "selected_concept": None,
+        "storyboard": [],
+        "concept_prompt": "",
+    }
     return {"session_id": session_id, "status": "created"}
+
 
 @app.post("/api/upload/audio")
 async def upload_audio(session_id: str = Form(...), file: UploadFile = File(...)):
     """Upload MP3 and analyze (legacy)."""
     session_dir = OUTPUT_DIR / session_id
-    session_dir.mkdir(exist_ok=True)
+    session_dir.mkdir(parents=True, exist_ok=True)
 
-    audio_path = session_dir / f"audio{Path(file.filename).suffix}"
+    suffix = Path(file.filename or "audio.mp3").suffix or ".mp3"
+    audio_path = session_dir / f"audio{suffix}"
     with open(audio_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    analysis = AudioAnalyzer.analyze(str(audio_path))
+    try:
+        analysis = AudioAnalyzer.analyze(str(audio_path))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Audio analysis failed: {exc}") from exc
+
+    session = legacy_sessions.setdefault(session_id, {"session_id": session_id})
+    session["audio_path"] = str(audio_path)
+    session["audio_analysis"] = analysis
+    session["status"] = "analyzed"
     return {"session_id": session_id, "analysis": analysis, "status": "analyzed"}
+
+
+@app.post("/api/upload/images")
+async def upload_images(
+    session_id: str = Form(...),
+    files: List[UploadFile] = File(...),
+):
+    """Upload reference images (legacy)."""
+    session_dir = OUTPUT_DIR / session_id / "references"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    paths: List[str] = []
+    for file in files:
+        dest = session_dir / (file.filename or f"ref_{uuid.uuid4().hex}.png")
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        paths.append(str(dest))
+    session = legacy_sessions.setdefault(session_id, {"session_id": session_id})
+    session["reference_images"] = paths
+    return {"session_id": session_id, "images": paths}
+
+
+@app.post("/api/chat")
+async def chat_endpoint(request: dict):
+    """Director chat for the interactive client (legacy)."""
+    session_id = request.get("session_id")
+    message = request.get("message", "")
+    if not session_id:
+        return {"error": "session_id required"}
+
+    session = legacy_sessions.setdefault(
+        session_id,
+        {"session_id": session_id, "chat_history": [], "status": "ideating"},
+    )
+    history = session.setdefault("chat_history", [])
+    history.append({"role": "user", "content": message})
+
+    backend = llm_backend or _init_llm_backend()
+    if backend is None:
+        reply = (
+            "[No LLM backend configured. Set OLLAMA_API_KEY for cloud mode, "
+            "or install llama.cpp / start local Ollama.]"
+        )
+    else:
+        messages: List[Dict[str, str]] = [
+            {
+                "role": "system",
+                "content": (
+                    "You are VidMuse, an expert AI music video director. "
+                    "Be cinematic, specific, and helpful. When proposing concepts, "
+                    "number them clearly (1. 2. 3.)."
+                ),
+            }
+        ]
+        analysis = session.get("audio_analysis")
+        if analysis:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"SONG ANALYSIS: {analysis.get('duration', 0):.1f}s, "
+                        f"{analysis.get('tempo', 0):.0f} BPM, "
+                        f"{analysis.get('beat_count', 0)} beats"
+                    ),
+                }
+            )
+        for msg in history[-12:]:
+            role = "assistant" if msg["role"] in ("assistant", "agent") else msg["role"]
+            messages.append({"role": role, "content": msg["content"]})
+
+        try:
+            reply = await backend.chat(messages)
+        except Exception as exc:
+            reply = f"[LLM error: {friendly_llm_error(exc)}]"
+
+    history.append({"role": "assistant", "content": reply})
+    session["status"] = "ideating"
+    if "concept" in message.lower():
+        session["concept_prompt"] = message
+
+    return {
+        "session_id": session_id,
+        "response": reply,
+        "phase": session.get("status", "ideation"),
+        "history": history[-6:],
+        "llm": {
+            "provider": getattr(backend, "name", None) if backend else None,
+            "model": getattr(backend, "model_name", None) if backend else None,
+            "used_fallback": bool(getattr(backend, "used_fallback", False)),
+        },
+    }
+
+
+@app.post("/api/concepts/generate")
+async def generate_concepts(request: dict):
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session:
+        return {"error": "Session not found"}
+
+    director = _get_director(session_id)
+    if session.get("audio_analysis"):
+        director.audio_analysis = session["audio_analysis"]
+    try:
+        concepts = await director.generate_concepts(
+            text_direction=session.get("concept_prompt") or "cinematic synthwave video",
+            reference_images=session.get("reference_images") or None,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=402, detail=friendly_llm_error(exc)) from exc
+    session["concepts"] = concepts
+    return {"session_id": session_id, "concepts": concepts}
+
+
+@app.post("/api/concept/select")
+async def select_concept(request: dict):
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session:
+        return {"error": "Session not found"}
+    session["selected_concept"] = request.get("concept_index", 0)
+    session["status"] = "storyboarding"
+    return {"session_id": session_id, "selected": session["selected_concept"]}
+
+
+@app.post("/api/storyboard/generate")
+async def generate_storyboard(request: dict):
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session:
+        return {"error": "Session not found"}
+    concepts = session.get("concepts") or []
+    idx = session.get("selected_concept") or 0
+    concept = concepts[idx] if isinstance(idx, int) and 0 <= idx < len(concepts) else {}
+    director = _get_director(session_id)
+    if session.get("audio_analysis"):
+        director.audio_analysis = session["audio_analysis"]
+    if session.get("audio_path"):
+        director.audio_path = session["audio_path"]
+    frames = await director.generate_storyboard(concept=concept)
+    session["storyboard"] = frames
+    analysis = session.get("audio_analysis") or {}
+    return {
+        "session_id": session_id,
+        "frames": frames,
+        "plan": {
+            "song_duration": analysis.get("duration"),
+            "scene_count": len(frames),
+            "tempo": analysis.get("tempo"),
+        },
+    }
+
+
+def _safe_session_asset(session_id: str, subdir: str, filename: str) -> Path:
+    """Resolve a session asset path and reject directory traversal."""
+    base = (OUTPUT_DIR / session_id / subdir).resolve()
+    path = (base / filename).resolve()
+    if not str(path).startswith(str(base)) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return path
+
+
+@app.post("/api/storyboard/generate-images")
+async def generate_storyboard_images(request: dict):
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session or not session.get("storyboard"):
+        return {"error": "No storyboard"}
+    concepts = session.get("concepts") or []
+    idx = session.get("selected_concept") or 0
+    concept = concepts[idx] if isinstance(idx, int) and 0 <= idx < len(concepts) else {
+        "style": "cinematic",
+        "palette": ["#0b1629", "#06b6d4", "#f59e0b"],
+    }
+    director = _get_director(session_id)
+    director.storyboard = session["storyboard"]
+    generated = await director.generate_storyboard_images(concept=concept)
+    session["storyboard"] = director.storyboard
+    total = len(session["storyboard"])
+    return {
+        "session_id": session_id,
+        "frames": session["storyboard"],
+        "generated": generated,
+        "summary": {
+            "total": total,
+            "succeeded": len(generated),
+            "failed": max(0, total - len(generated)),
+        },
+    }
+
+
+@app.post("/api/storyboard/approve")
+async def approve_storyboard(request: dict):
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session:
+        return {"error": "Session not found"}
+    approved = set(request.get("approved_frames") or [])
+    for frame in session.get("storyboard") or []:
+        if isinstance(frame, dict):
+            frame["approved"] = frame.get("id") in approved
+    session["status"] = "generating"
+    return {"session_id": session_id, "status": "approved"}
+
+
+@app.post("/api/video/generate")
+async def generate_video(request: dict):
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session:
+        return {"error": "Session not found"}
+    concepts = session.get("concepts") or []
+    idx = session.get("selected_concept") or 0
+    concept = concepts[idx] if isinstance(idx, int) and 0 <= idx < len(concepts) else {
+        "style": "cinematic",
+        "palette": ["#0b1629", "#06b6d4", "#f59e0b"],
+    }
+    director = _get_director(session_id)
+    if session.get("audio_path"):
+        director.audio_path = session["audio_path"]
+    if session.get("audio_analysis"):
+        director.audio_analysis = session["audio_analysis"]
+    # Only animate approved frames when present
+    frames = [
+        f for f in (session.get("storyboard") or [])
+        if isinstance(f, dict) and f.get("approved", True)
+    ]
+    director.storyboard = frames or session.get("storyboard") or []
+    generated = await director.generate_video_clips(concept=concept)
+    session["storyboard"] = director.storyboard
+    analysis = session.get("audio_analysis") or {}
+    return {
+        "session_id": session_id,
+        "generated": generated,
+        "clips": generated,
+        "summary": {
+            "total": len(director.storyboard),
+            "succeeded": len(generated),
+            "failed": max(0, len(director.storyboard) - len(generated)),
+            "song_duration": analysis.get("duration"),
+        },
+    }
+
+
+@app.get("/api/session/{session_id}/asset/storyboard/{filename}")
+async def get_storyboard_asset(session_id: str, filename: str):
+    path = _safe_session_asset(session_id, "storyboard", filename)
+    return FileResponse(path)
+
+
+@app.get("/api/session/{session_id}/asset/video/{filename}")
+async def get_video_asset(session_id: str, filename: str):
+    path = _safe_session_asset(session_id, "videos", filename)
+    return FileResponse(path, media_type="video/mp4")
+
+
+@app.post("/api/edit/final")
+async def edit_final(request: dict):
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session or not session.get("audio_path"):
+        return {"error": "No audio uploaded"}
+    director = _get_director(session_id)
+    if session.get("audio_analysis"):
+        director.audio_analysis = session["audio_analysis"]
+    director.storyboard = [
+        f for f in (session.get("storyboard") or []) if isinstance(f, dict)
+    ]
+    clips = [
+        {
+            "path": f["video_path"],
+            "duration": float(f.get("target_duration") or f.get("duration") or 0),
+            "start": float(f.get("timestamp") or 0),
+        }
+        for f in director.storyboard
+        if f.get("video_path")
+    ]
+    if not clips:
+        return {"error": "No video clips generated"}
+    final_path = await director.assemble_final_video(
+        video_clips=clips,
+        audio_path=session["audio_path"],
+    )
+    session["final_video_path"] = final_path
+    session["status"] = "done"
+    return {
+        "session_id": session_id,
+        "video_path": final_path,
+        "status": "done",
+        "duration": (session.get("audio_analysis") or {}).get("duration"),
+        "scenes": len(clips),
+    }
+
+
+@app.get("/api/download/{session_id}")
+async def download_video(session_id: str):
+    session = legacy_sessions.get(session_id)
+    if not session or not session.get("final_video_path"):
+        return {"error": "Video not ready"}
+    return FileResponse(
+        session["final_video_path"],
+        media_type="video/mp4",
+        filename=f"vidmuse_{session_id}.mp4",
+    )
+
+
+@app.get("/api/session/{session_id}")
+async def get_session(session_id: str):
+    session = legacy_sessions.get(session_id)
+    if not session:
+        return {"error": "Session not found"}
+    return session
+
 
 # ─── MAIN ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn
 
-    # Initialize LLM backend
-    global llm_backend
-    llm_backend = create_llm_backend()
-    if llm_backend:
-        print(f"[VidMuse] LLM backend: {llm_backend.name} ({llm_backend.model_name})")
-    else:
-        print("[VidMuse] WARNING: No LLM backend available. Install llama-cpp-python or start Ollama.")
-
+    _init_llm_backend()
     uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)

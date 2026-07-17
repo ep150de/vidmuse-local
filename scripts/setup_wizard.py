@@ -351,7 +351,7 @@ def write_env(config: Dict[str, str]) -> None:
         "OUTPUT_DIR=./outputs",
         "",
         f"OLLAMA_API_KEY={base.get('OLLAMA_API_KEY', '')}",
-        f"OLLAMA_MODEL={base.get('OLLAMA_MODEL', 'gpt-oss:120b')}",
+        f"OLLAMA_MODEL={base.get('OLLAMA_MODEL', 'deepseek-v4-flash')}",
         f"LLM_PROVIDER={base.get('LLM_PROVIDER', 'ollama')}",
         f"LLM_FALLBACK={base.get('LLM_FALLBACK', 'opencode-go')}",
         "",
@@ -492,10 +492,19 @@ def step_cloud_keys() -> Dict[str, str]:
 
     clear()
     title("Cloud models")
-    config["OLLAMA_MODEL"] = ask("Ollama model", default="gpt-oss:120b")
+    info("Tip: large models like gpt-oss:120b often need a paid Ollama plan.")
+    config["OLLAMA_MODEL"] = ask(
+        "Ollama model (free-tier friendly default)",
+        default="deepseek-v4-flash",
+    )
     config["OPENCODE_MODEL"] = ask("OpenCode fallback model", default="deepseek-v4-flash")
-    use_fallback = yes_no("Enable OpenCode as automatic LLM fallback?", default=True)
-    config["LLM_FALLBACK"] = "opencode-go" if use_fallback and config.get("OPENCODE_API_KEY") else "none"
+    use_fallback = yes_no(
+        "Enable OpenCode as automatic LLM fallback? (needs OpenCode API key above)",
+        default=bool(config.get("OPENCODE_API_KEY")),
+    )
+    config["LLM_FALLBACK"] = (
+        "opencode-go" if use_fallback and config.get("OPENCODE_API_KEY") else "none"
+    )
     config["LLM_PROVIDER"] = "ollama"
     config["COMFYUI_BACKEND"] = "cloud"
     return config
@@ -694,9 +703,9 @@ def step_finish(mode: str) -> None:
          docker compose -f docker-compose.cloud.yml up -d --build
 
     B) Direct
-         cd server
-         source .venv/bin/activate          # if venv was created
-         uvicorn main:app --host 0.0.0.0 --port 8000
+         cd server && source .venv/bin/activate   # if venv was created
+         cd ..   # back to repo root
+         PYTHONPATH=. uvicorn server.main:app --host 0.0.0.0 --port 8000
 
   Then start the UI:
 
@@ -734,12 +743,25 @@ def step_finish(mode: str) -> None:
                     continue
                 k, _, v = line.partition("=")
                 env[k.strip()] = v.strip()
+        # server.* imports require the repo root on PYTHONPATH
+        env["PYTHONPATH"] = str(ROOT) + (
+            os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+        )
         py = str(venv_py) if venv_py.exists() else sys.executable
         info("Starting uvicorn on :8000 (Ctrl+C to stop)…")
         try:
             subprocess.run(
-                [py, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"],
-                cwd=str(SERVER_DIR),
+                [
+                    py,
+                    "-m",
+                    "uvicorn",
+                    "server.main:app",
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "8000",
+                ],
+                cwd=str(ROOT),
                 env=env,
             )
         except KeyboardInterrupt:
