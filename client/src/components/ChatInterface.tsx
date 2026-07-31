@@ -86,13 +86,13 @@ export function ChatInterface({ onConceptsReady }: Props) {
               )}
             </div>
             <div
-              className={`max-w-[80%] px-4 py-3 ${
+              className={`max-w-[80%] rounded-xl px-4 py-3 ${
                 msg.role === "agent"
-                  ? "bg-navy-900/80 border border-cyan-500/20 text-slate-200"
-                  : "bg-cyan-500/15 border border-cyan-400/25 text-cyan-50"
+                  ? "bg-[var(--surface-2)] border border-[var(--border)] text-[var(--ink)]"
+                  : "bg-[var(--accent-soft)] border border-[var(--accent)]/30 text-[var(--ink)]"
               }`}
             >
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-[var(--ink)]">
                 {msg.content}
               </p>
             </div>
@@ -131,13 +131,13 @@ export function ChatInterface({ onConceptsReady }: Props) {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && sendMessage()}
           placeholder="Describe the vibe or ask for concepts…"
-          className="flex-1 bg-navy-900/80 border border-cyan-500/25 px-4 py-3 text-white placeholder:text-[var(--muted)] focus:border-cyan-400 focus:outline-none"
+          className="flex-1 rounded-xl bg-[var(--surface-2)] border border-[var(--border)] px-4 py-3 text-[var(--ink)] placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:outline-none"
         />
         <button
           type="button"
           onClick={sendMessage}
           disabled={isTyping || !input.trim()}
-          className="cta-primary px-5 py-3 disabled:opacity-40"
+          className="cta-primary rounded-xl px-5 py-3 disabled:opacity-40"
         >
           <Send className="w-5 h-5" />
         </button>
@@ -146,11 +146,14 @@ export function ChatInterface({ onConceptsReady }: Props) {
       <button
         type="button"
         onClick={onConceptsReady}
-        className="mt-4 flex items-center justify-center gap-2 text-sm text-gold-400 hover:text-gold-300 transition-colors"
+        className="mt-4 cta-primary w-full py-3.5 rounded-xl text-sm inline-flex items-center justify-center gap-2"
       >
         <Sparkles className="w-4 h-4" />
-        Skip to concept selection
+        Generate concepts from lyrics
       </button>
+      <p className="mt-2 text-center text-xs text-[var(--text-secondary)]">
+        Best results when lyrics + a face reference photo were provided at upload
+      </p>
     </div>
   );
 }

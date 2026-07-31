@@ -6,14 +6,16 @@ Priority (local mode):
   3. OpenCode Go (if key present)
 
 Priority (cloud mode / VIDMUSE_MODE=cloud):
-  1. Ollama Cloud (OLLAMA_API_KEY)
-  2. OpenCode Go fallback ONLY when OPENCODE_API_KEY is set
+  1. Configured Ollama Cloud model (OLLAMA_MODEL)
+  2. Free-tier Ollama Cloud model alternates (subscription 403 → next model)
+  3. OpenCode Go (when OPENCODE_API_KEY is set)
 
 Override with LLM_PROVIDER=ollama|llamacpp|opencode-go
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, List, Optional
 
@@ -22,33 +24,60 @@ from server.llm.llamacpp_backend import auto_detect_llama_cpp
 from server.llm.ollama_backend import CreditExhaustedError, OllamaBackend
 from server.llm.opencode_backend import OpenCodeGoBackend
 
+LOG = logging.getLogger("vidmuse.llm")
+
 _active_backend: Optional[LLMBackend] = None
 
-# Prefer models that work on Ollama Cloud free/entry tiers.
-# gpt-oss:120b and other large tags often require a paid subscription.
-DEFAULT_CLOUD_OLLAMA_MODEL = "deepseek-v4-flash"
+# Prefer models that currently work on Ollama Cloud free tier.
+# deepseek-v4-flash / deepseek-v4-pro require Pro as of 2026.
+DEFAULT_CLOUD_OLLAMA_MODEL = "gemma4:31b"
 DEFAULT_LOCAL_OLLAMA_MODEL = "qwen2.5:32b"
 
+# Tried in order after the configured OLLAMA_MODEL fails with subscription/quota.
+DEFAULT_CLOUD_OLLAMA_FALLBACKS = (
+    "gemma4:31b",
+    "gpt-oss:20b",
+    "gpt-oss:120b",
+    "gemma3:12b",
+    "ministral-3:8b",
+)
 
-class FallbackLLMBackend(LLMBackend):
-    """Primary backend with automatic fallback on credit/auth failures."""
 
-    def __init__(self, primary: LLMBackend, fallback: LLMBackend):
-        self.primary = primary
-        self.fallback = fallback
+class CascadeLLMBackend(LLMBackend):
+    """Try backends in order; advance on credit/auth/subscription failures."""
+
+    def __init__(self, backends: List[LLMBackend]):
+        if not backends:
+            raise ValueError("CascadeLLMBackend requires at least one backend")
+        self.backends = backends
         self.last_used: Optional[str] = None
         self.used_fallback = False
-        self.last_primary_error: Optional[str] = None
+        self.last_errors: List[str] = []
 
     @property
     def name(self) -> str:
-        return f"{self.primary.name}+{self.fallback.name}"
+        return "+".join(b.name for b in self.backends)
 
     @property
     def model_name(self) -> str:
-        if self.used_fallback:
-            return self.fallback.model_name
-        return self.primary.model_name
+        if self.last_used:
+            for b in self.backends:
+                label = f"{b.name}/{b.model_name}"
+                if label == self.last_used or b.name == self.last_used:
+                    return b.model_name
+        return self.backends[0].model_name
+
+    @property
+    def primary(self) -> LLMBackend:
+        return self.backends[0]
+
+    @property
+    def fallback(self) -> LLMBackend:
+        return self.backends[-1]
+
+    @property
+    def last_primary_error(self) -> Optional[str]:
+        return self.last_errors[0] if self.last_errors else None
 
     async def chat(
         self,
@@ -57,28 +86,47 @@ class FallbackLLMBackend(LLMBackend):
         stream: bool = False,
         **kwargs: Any,
     ) -> str:
-        try:
-            result = await self.primary.chat(messages, stream=stream, **kwargs)
-            self.last_used = self.primary.name
-            self.used_fallback = False
-            self.last_primary_error = None
-            return result
-        except Exception as primary_exc:
-            if not self._should_fallback(primary_exc):
-                raise
-            self.last_primary_error = str(primary_exc)
+        self.last_errors = []
+        last_exc: Optional[Exception] = None
+
+        for i, backend in enumerate(self.backends):
             try:
-                result = await self.fallback.chat(messages, stream=stream, **kwargs)
-                self.last_used = self.fallback.name
-                self.used_fallback = True
+                result = await backend.chat(messages, stream=stream, **kwargs)
+                label = f"{backend.name}/{backend.model_name}"
+                self.last_used = label
+                self.used_fallback = i > 0
+                if i > 0:
+                    LOG.info("LLM cascade succeeded on %s after earlier failures", label)
                 return result
-            except Exception as fallback_exc:
-                raise CreditExhaustedError(
-                    f"Primary LLM failed ({primary_exc}); "
-                    f"fallback also failed ({fallback_exc}). "
-                    f"Try a free-tier Ollama model (e.g. {DEFAULT_CLOUD_OLLAMA_MODEL}) "
-                    "via OLLAMA_MODEL in .env, or set OPENCODE_API_KEY / upgrade Ollama Cloud."
-                ) from fallback_exc
+            except Exception as exc:
+                last_exc = exc
+                self.last_errors.append(f"{backend.name}/{backend.model_name}: {exc}")
+                if i < len(self.backends) - 1 and self._should_fallback(exc):
+                    LOG.warning(
+                        "LLM %s/%s failed (%s) — trying next backend",
+                        backend.name,
+                        backend.model_name,
+                        exc,
+                    )
+                    continue
+                if i < len(self.backends) - 1:
+                    # Non-fallbackable error — still try next if it's a different provider
+                    if backend.name != self.backends[i + 1].name:
+                        LOG.warning(
+                            "LLM %s/%s failed (%s) — trying alternate provider",
+                            backend.name,
+                            backend.model_name,
+                            exc,
+                        )
+                        continue
+                raise
+
+        raise CreditExhaustedError(
+            "All LLM backends failed:\n  - "
+            + "\n  - ".join(self.last_errors)
+            + f"\n\nTry a free-tier Ollama model (e.g. {DEFAULT_CLOUD_OLLAMA_MODEL}) "
+            "via OLLAMA_MODEL in .env, or set OPENCODE_API_KEY / upgrade Ollama Cloud."
+        ) from last_exc
 
     @staticmethod
     def _should_fallback(exc: Exception) -> bool:
@@ -97,6 +145,9 @@ class FallbackLLMBackend(LLMBackend):
                 "billing",
                 "subscription",
                 "upgrade for access",
+                "unauthorized",
+                "payment required",
+                "insufficient",
             )
         )
 
@@ -116,23 +167,33 @@ class FallbackLLMBackend(LLMBackend):
         return await self.chat(messages, stream=False)
 
     async def list_models(self) -> List[str]:
-        models = await self.primary.list_models()
-        try:
-            models = list(dict.fromkeys(models + await self.fallback.list_models()))
-        except Exception:
-            pass
+        models: List[str] = []
+        for backend in self.backends:
+            try:
+                models = list(dict.fromkeys(models + await backend.list_models()))
+            except Exception:
+                pass
         return models
 
     async def health(self) -> Dict[str, Any]:
+        chain = []
+        for backend in self.backends:
+            try:
+                chain.append(await backend.health())
+            except Exception as exc:
+                chain.append({"status": "down", "backend": backend.name, "error": str(exc)})
         return {
             "status": "up",
             "backend": self.name,
-            "primary": await self.primary.health(),
-            "fallback": await self.fallback.health(),
+            "chain": chain,
             "last_used": self.last_used,
             "used_fallback": self.used_fallback,
-            "last_primary_error": self.last_primary_error,
+            "last_errors": self.last_errors,
         }
+
+
+# Back-compat alias used by older imports / docs
+FallbackLLMBackend = CascadeLLMBackend
 
 
 def _mode() -> str:
@@ -144,41 +205,115 @@ def _opencode_key() -> Optional[str]:
     return key or None
 
 
-def _want_fallback() -> bool:
-    """Fallback only when explicitly enabled AND an OpenCode key exists."""
+def _want_opencode_fallback() -> bool:
+    """Include OpenCode in the cascade when keyed and not explicitly disabled."""
     if not _opencode_key():
         return False
     raw = (os.getenv("LLM_FALLBACK") or "").strip().lower()
     if raw in ("none", "off", "false", "0"):
         return False
-    if raw in ("opencode-go", "opencode", "opencode-zen", "1", "true", "yes"):
+    if raw in ("opencode-go", "opencode", "opencode-zen", "1", "true", "yes", "auto"):
         return True
     # Default on in cloud mode when a key is present
     return _mode() == "cloud"
 
 
-def _ollama_for_mode() -> OllamaBackend:
+def _ollama_url_and_key() -> tuple[str, Optional[str]]:
     mode = _mode()
     url = os.getenv("OLLAMA_URL")
-    model = os.getenv("OLLAMA_MODEL")
     if mode == "cloud":
         url = url or "https://ollama.com"
-        model = model or DEFAULT_CLOUD_OLLAMA_MODEL
     else:
         url = url or "http://localhost:11434"
-        model = model or DEFAULT_LOCAL_OLLAMA_MODEL
-    return OllamaBackend(model=model, base_url=url, api_key=os.getenv("OLLAMA_API_KEY"))
+    key = (os.getenv("OLLAMA_API_KEY") or "").strip() or None
+    return url.rstrip("/"), key
+
+
+def _ollama_for_mode(model: Optional[str] = None) -> OllamaBackend:
+    mode = _mode()
+    url, key = _ollama_url_and_key()
+    chosen = model or os.getenv("OLLAMA_MODEL")
+    if not chosen:
+        chosen = DEFAULT_CLOUD_OLLAMA_MODEL if mode == "cloud" else DEFAULT_LOCAL_OLLAMA_MODEL
+    return OllamaBackend(model=chosen, base_url=url, api_key=key)
+
+
+def _cloud_fallback_models(primary_model: str) -> List[str]:
+    """Ordered free-tier Ollama models to try after the primary fails."""
+    raw = (os.getenv("OLLAMA_FALLBACK_MODELS") or "").strip()
+    if raw:
+        candidates = [m.strip() for m in raw.split(",") if m.strip()]
+    else:
+        candidates = list(DEFAULT_CLOUD_OLLAMA_FALLBACKS)
+    seen = {primary_model.lower()}
+    out: List[str] = []
+    for m in candidates:
+        if m.lower() in seen:
+            continue
+        seen.add(m.lower())
+        out.append(m)
+    return out
+
+
+def _build_cascade(backends: List[LLMBackend]) -> LLMBackend:
+    # Deduplicate identical name+model pairs
+    unique: List[LLMBackend] = []
+    seen: set[str] = set()
+    for b in backends:
+        key = f"{b.name}:{b.model_name}"
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(b)
+    if len(unique) == 1:
+        return unique[0]
+    return CascadeLLMBackend(unique)
+
+
+def _ollama_cascade(primary: Optional[OllamaBackend] = None) -> LLMBackend:
+    """Ollama primary + free-tier model alternates + optional OpenCode."""
+    primary = primary or _ollama_for_mode()
+    backends: List[LLMBackend] = [primary]
+
+    if _mode() == "cloud":
+        url, key = _ollama_url_and_key()
+        for model in _cloud_fallback_models(primary.model_name):
+            backends.append(OllamaBackend(model=model, base_url=url, api_key=key))
+
+    if _want_opencode_fallback():
+        key = _opencode_key()
+        if key:
+            backends.append(OpenCodeGoBackend(api_key=key))
+
+    return _build_cascade(backends)
+
+
+def _opencode_cascade() -> Optional[LLMBackend]:
+    """OpenCode primary with Ollama (and free-model) fallback when OpenCode is out of credits."""
+    key = _opencode_key()
+    if not key:
+        return None
+    backends: List[LLMBackend] = [OpenCodeGoBackend(api_key=key)]
+    # Prefer Ollama when OpenCode fails — user often has one or the other credited
+    if os.getenv("OLLAMA_API_KEY") or _mode() != "cloud":
+        backends.append(_ollama_for_mode())
+        if _mode() == "cloud":
+            url, okey = _ollama_url_and_key()
+            for model in _cloud_fallback_models(_ollama_for_mode().model_name):
+                backends.append(OllamaBackend(model=model, base_url=url, api_key=okey))
+    return _build_cascade(backends)
 
 
 def _maybe_wrap_fallback(primary: LLMBackend) -> LLMBackend:
-    if not _want_fallback():
-        return primary
-    key = _opencode_key()
-    if not key:
-        return primary
-    if primary.name == "opencode-go":
-        return primary
-    return FallbackLLMBackend(primary, OpenCodeGoBackend(api_key=key))
+    """Legacy helper: wrap a non-Ollama primary with OpenCode, or expand Ollama cascades."""
+    if isinstance(primary, OllamaBackend):
+        return _ollama_cascade(primary)
+    backends: List[LLMBackend] = [primary]
+    if _want_opencode_fallback() and primary.name != "opencode-go":
+        key = _opencode_key()
+        if key:
+            backends.append(OpenCodeGoBackend(api_key=key))
+    return _build_cascade(backends)
 
 
 def create_llm_backend() -> Optional[LLMBackend]:
@@ -190,15 +325,11 @@ def create_llm_backend() -> Optional[LLMBackend]:
 
     # Explicit provider override
     if provider in ("opencode-go", "opencode", "opencode-zen"):
-        key = _opencode_key()
-        if not key:
-            _active_backend = None
-            return None
-        backend: Optional[LLMBackend] = OpenCodeGoBackend(api_key=key)
+        backend = _opencode_cascade()
         _active_backend = backend
         return backend
     if provider in ("ollama", "ollama-local", "ollama-cloud"):
-        backend = _maybe_wrap_fallback(_ollama_for_mode())
+        backend = _ollama_cascade()
         _active_backend = backend
         return backend
     if provider in ("llamacpp", "llama.cpp", "llama-cpp"):
@@ -208,13 +339,13 @@ def create_llm_backend() -> Optional[LLMBackend]:
         _active_backend = backend
         return backend
 
-    # Cloud mode: prefer Ollama Cloud (+ OpenCode fallback when keyed)
+    # Cloud mode: Ollama Cloud cascade (+ OpenCode when keyed)
     if mode == "cloud":
-        backend = _maybe_wrap_fallback(_ollama_for_mode())
+        backend = _ollama_cascade()
         _active_backend = backend
         return backend
 
-    # Local mode: llama.cpp first, then Ollama, then OpenCode
+    # Local mode: llama.cpp first, then Ollama cascade, then OpenCode
     llama_backend = auto_detect_llama_cpp()
     if llama_backend is not None:
         backend = _maybe_wrap_fallback(llama_backend)
@@ -222,20 +353,15 @@ def create_llm_backend() -> Optional[LLMBackend]:
         return backend
 
     try:
-        ollama = _ollama_for_mode()
-        backend = _maybe_wrap_fallback(ollama)
+        backend = _ollama_cascade()
         _active_backend = backend
         return backend
     except Exception:
         pass
 
-    key = _opencode_key()
-    if key:
-        backend = OpenCodeGoBackend(api_key=key)
-        _active_backend = backend
-        return backend
-
-    return None
+    backend = _opencode_cascade()
+    _active_backend = backend
+    return backend
 
 
 def get_active_backend() -> Optional[LLMBackend]:
@@ -254,17 +380,24 @@ def friendly_llm_error(exc: Exception) -> str:
     if "subscription" in lower or "upgrade for access" in lower:
         return (
             f"{text}\n\n"
-            f"Your Ollama Cloud plan cannot use the current model. "
+            f"Your Ollama Cloud plan cannot use that model (many large tags need Pro). "
             f"In .env set OLLAMA_MODEL={DEFAULT_CLOUD_OLLAMA_MODEL} "
-            f"(or another free-tier model), then restart the server. "
-            "Optionally add OPENCODE_API_KEY for automatic fallback."
+            f"(or another free-tier model like gpt-oss:20b), then restart the server. "
+            "The server also auto-tries free-tier alternates, then OpenCode if keyed."
         )
     if "opencode_api_key is not configured" in lower:
         return (
             f"{text}\n\n"
             "LLM_FALLBACK is enabled but OPENCODE_API_KEY is empty. "
             "Either paste an OpenCode key into .env, set LLM_FALLBACK=none, "
-            f"or switch OLLAMA_MODEL to a free-tier model like {DEFAULT_CLOUD_OLLAMA_MODEL}."
+            f"or rely on free-tier Ollama (OLLAMA_MODEL={DEFAULT_CLOUD_OLLAMA_MODEL})."
+        )
+    if "401" in lower or "unauthorized" in lower:
+        return (
+            f"{text}\n\n"
+            "OpenCode rejected the key (expired / out of credits / invalid). "
+            f"Ollama Cloud free models should still work — set OLLAMA_MODEL={DEFAULT_CLOUD_OLLAMA_MODEL} "
+            "and ensure OLLAMA_API_KEY is set, then restart."
         )
     return text
 

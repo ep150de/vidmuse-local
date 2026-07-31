@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 import uuid
@@ -20,6 +21,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import aiohttp
+
+LOG = logging.getLogger("vidmuse.comfy")
 
 COMFYUI_URL = os.getenv("COMFYUI_URL", "http://localhost:8188").rstrip("/")
 COMFY_CLOUD_URL = os.getenv("COMFY_CLOUD_URL", "https://cloud.comfy.org").rstrip("/")
@@ -49,22 +52,38 @@ _DEFAULT_HUMO_UNET = "humo_17B_fp8_e4m3fn.safetensors"
 _DEFAULT_HUMO_AUDIO_ENC = "whisper_large_v3_fp16.safetensors"
 _DEFAULT_LTX_CKPT = "ltx-2.3-22b-distilled-fp8.safetensors"
 _DEFAULT_LTX_TEXT_ENCODER = "gemma_3_12B_it.safetensors"
+_DEFAULT_INFINITETALK_UNET = "wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
+_DEFAULT_INFINITETALK_PATCH = "wan2.1_infiniteTalk_single_fp16.safetensors"
+_DEFAULT_INFINITETALK_AUDIO_ENC = "wav2vec2_large_english_fp16.safetensors"
 
 
-def _resolve_comfy_config():
+def _resolve_comfy_config(
+    backend_override: Optional[str] = None,
+    url_override: Optional[str] = None,
+):
     """Return (base_url, api_key, backend_label)."""
-    backend = COMFYUI_BACKEND or ("cloud" if VIDMUSE_MODE == "cloud" else "local")
+    backend = (backend_override or COMFYUI_BACKEND or (
+        "cloud" if VIDMUSE_MODE == "cloud" else "local"
+    )).strip().lower()
     if backend == "cloud":
-        return COMFY_CLOUD_URL, COMFY_CLOUD_API_KEY, "cloud"
-    return COMFYUI_URL, None, "local"
+        return (url_override or COMFY_CLOUD_URL).rstrip("/"), COMFY_CLOUD_API_KEY, "cloud"
+    label = "ai-playground" if backend in ("ai-playground", "ai_playground") else "local"
+    return (url_override or COMFYUI_URL).rstrip("/"), None, label
 
 
 class ComfyUIClient:
     """Async client for ComfyUI's HTTP + WebSocket API (local or Comfy Cloud)."""
 
-    def __init__(self):
-        self.url, self.api_key, self.backend = _resolve_comfy_config()
+    def __init__(
+        self,
+        backend: Optional[str] = None,
+        url: Optional[str] = None,
+    ):
+        self.url, self.api_key, self.backend = _resolve_comfy_config(backend, url)
         self.client_id = str(uuid.uuid4())
+        self._available_models: Optional[List[str]] = None
+        self._model_probe_error: Optional[str] = None
+        self._resolved_ckpt_log: set[str] = set()
 
     def _headers(self) -> Dict[str, str]:
         headers: Dict[str, str] = {}
@@ -81,17 +100,142 @@ class ComfyUIClient:
             payload["extra_data"] = {"api_key_comfy_org": self.api_key}
         return payload
 
+    def _extract_models_from_object_info(self, objects: Dict[str, Any]) -> List[str]:
+        checkpoints: List[str] = []
+        for node_name in (
+            "CheckpointLoaderSimple",
+            "UNETLoader",
+            "DiffusionModelLoader",
+            "VAELoader",
+            "CLIPLoader",
+        ):
+            node = objects.get(node_name) or {}
+            required = (node.get("input") or {}).get("required") or {}
+            for input_spec in required.values():
+                if (
+                    isinstance(input_spec, list)
+                    and input_spec
+                    and isinstance(input_spec[0], list)
+                ):
+                    checkpoints.extend(str(x) for x in input_spec[0])
+        return list(dict.fromkeys(checkpoints))
+
+    async def probe_available_models(self, force: bool = False) -> List[str]:
+        """Probe installed Comfy models (local / AI Playground). Cached per client."""
+        if self.backend == "cloud":
+            return []
+        if self._available_models is not None and not force:
+            return self._available_models
+        try:
+            async with aiohttp.ClientSession(headers=self._headers()) as session:
+                async with session.get(f"{self.url}/object_info", timeout=8) as resp:
+                    if resp.status != 200:
+                        self._model_probe_error = f"HTTP {resp.status}"
+                        self._available_models = []
+                        return []
+                    objects = await resp.json()
+                    models = self._extract_models_from_object_info(objects)
+                    self._available_models = models
+                    self._model_probe_error = None
+                    return models
+        except Exception as exc:
+            self._model_probe_error = str(exc)
+            self._available_models = []
+            return []
+
+    def _pick_from_available(
+        self,
+        preferred: List[str],
+        *,
+        substrings: Optional[List[str]] = None,
+    ) -> Optional[str]:
+        available = self._available_models or []
+        if not available:
+            return None
+        lower_map = {m.lower(): m for m in available}
+        for name in preferred:
+            if not name:
+                continue
+            if name in available:
+                return name
+            hit = lower_map.get(name.lower())
+            if hit:
+                return hit
+            # Basename match (Comfy sometimes returns relative paths)
+            base = Path(name).name.lower()
+            for m in available:
+                if Path(m).name.lower() == base:
+                    return m
+        if substrings:
+            for sub in substrings:
+                sub_l = sub.lower()
+                for m in available:
+                    if sub_l in m.lower():
+                        return m
+        # Last resort: any safetensors checkpoint-looking file
+        for m in available:
+            low = m.lower()
+            if low.endswith((".safetensors", ".ckpt")) and "vae" not in low and "clip" not in low:
+                return m
+        return available[0] if available else None
+
     def _default_ckpt(self, kind: str = "turbo") -> str:
-        """Resolve checkpoint name for local vs cloud backends."""
+        """Resolve checkpoint name for local vs cloud backends with local fallbacks."""
         if kind == "flux":
             env = os.getenv("COMFY_CHECKPOINT_FLUX")
-            if env:
-                return env
-            return _CLOUD_DEFAULT_FLUX if self.backend == "cloud" else _LOCAL_DEFAULT_FLUX
-        env = os.getenv("COMFY_CHECKPOINT_TURBO")
-        if env:
-            return env
-        return _CLOUD_DEFAULT_TURBO if self.backend == "cloud" else _LOCAL_DEFAULT_TURBO
+            preferred = [
+                env,
+                _CLOUD_DEFAULT_FLUX if self.backend == "cloud" else _LOCAL_DEFAULT_FLUX,
+                "sd_xl_base_1.0.safetensors",
+                "sd_xl_turbo_1.0_fp16.safetensors",
+            ]
+            if self.backend == "cloud":
+                return env or _CLOUD_DEFAULT_FLUX
+            picked = self._pick_from_available(
+                [p for p in preferred if p],
+                substrings=["flux", "sd_xl", "sdxl", "turbo"],
+            )
+            result = picked or env or _LOCAL_DEFAULT_FLUX
+        else:
+            env = os.getenv("COMFY_CHECKPOINT_TURBO")
+            preferred = [
+                env,
+                _CLOUD_DEFAULT_TURBO if self.backend == "cloud" else _LOCAL_DEFAULT_TURBO,
+                "sd_xl_turbo_1.0_fp16.safetensors",
+                "sd_xl_base_1.0.safetensors",
+                "zimage_turbo.safetensors",
+            ]
+            if self.backend == "cloud":
+                return env or _CLOUD_DEFAULT_TURBO
+            picked = self._pick_from_available(
+                [p for p in preferred if p],
+                substrings=["turbo", "sd_xl", "sdxl", "zimage", "z_image"],
+            )
+            result = picked or env or _LOCAL_DEFAULT_TURBO
+
+        key = f"{kind}:{result}"
+        if key not in self._resolved_ckpt_log:
+            self._resolved_ckpt_log.add(key)
+            print(f"[ComfyUI] Using {kind} checkpoint: {result} (backend={self.backend})")
+        return result
+
+    def _local_image_backend(self) -> str:
+        """Prefer SDXL-style fused checkpoints when Z-Image split files are absent."""
+        forced = os.getenv("COMFY_IMAGE_BACKEND", "").strip().lower()
+        if forced:
+            return forced
+        if self.backend == "cloud":
+            return "zimage"
+        models = self._available_models or []
+        if not models:
+            return "sdxl"
+        joined = " ".join(m.lower() for m in models)
+        has_zimage = "z_image" in joined or "zimage" in joined
+        has_qwen = "qwen_3" in joined or "qwen3" in joined
+        has_ae = "ae.safetensors" in joined or "/ae." in joined
+        if has_zimage and has_qwen and has_ae:
+            return "zimage"
+        return "sdxl"
 
     # ── text-to-image (Z-Image Turbo) ─────────────────────────────────────
 
@@ -103,16 +247,22 @@ class ComfyUIClient:
         seed: Optional[int] = None,
         cfg_scale: float = 1.0,
         steps: int = 8,
+        reference_image_names: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Official Z-Image Turbo graph (UNET + Qwen CLIP + ae VAE).
 
-        Matches Comfy-Org template: EmptySD3LatentImage + ModelSamplingAuraFlow
-        + ConditioningZeroOut negatives. Falls back to SDXL Turbo graph only when
-        explicitly requested via COMFY_IMAGE_BACKEND=sdxl.
+        When reference_image_names are provided, uses TextEncodeZImageOmni + VAE
+        reference latents so the generated still keeps the uploaded face/identity.
         """
         if os.getenv("COMFY_IMAGE_BACKEND", "").strip().lower() == "sdxl":
             return self._build_sdxl_turbo_workflow(
-                prompt, width, height, seed, cfg_scale=1.5, steps=4
+                prompt,
+                width,
+                height,
+                seed,
+                cfg_scale=1.5,
+                steps=4,
+                reference_image_names=reference_image_names,
             )
 
         if seed is None:
@@ -123,12 +273,48 @@ class ComfyUIClient:
         vae = os.getenv("COMFY_ZIMAGE_VAE", _CLOUD_DEFAULT_ZIMAGE_VAE)
 
         # Local installs may still use a fused checkpoint name without split files.
-        if self.backend != "cloud" and unet.endswith(".safetensors") and "z_image" not in unet:
-            return self._build_sdxl_turbo_workflow(
-                prompt, width, height, seed, cfg_scale=2.5, steps=4, ckpt=unet
+        if self.backend != "cloud":
+            local_backend = self._local_image_backend()
+            if local_backend == "sdxl" or (
+                unet.endswith(".safetensors")
+                and "z_image" not in unet
+                and "zimage" not in unet.lower()
+            ):
+                return self._build_sdxl_turbo_workflow(
+                    prompt,
+                    width,
+                    height,
+                    seed,
+                    cfg_scale=2.5,
+                    steps=4,
+                    ckpt=self._default_ckpt("turbo"),
+                    reference_image_names=reference_image_names,
+                )
+            # Remap Z-Image piece names from whatever is installed locally.
+            unet = (
+                self._pick_from_available(
+                    [unet, _CLOUD_DEFAULT_ZIMAGE_UNET, _LOCAL_DEFAULT_TURBO],
+                    substrings=["z_image", "zimage"],
+                )
+                or unet
+            )
+            clip = (
+                self._pick_from_available(
+                    [clip, _CLOUD_DEFAULT_ZIMAGE_CLIP],
+                    substrings=["qwen_3", "qwen3"],
+                )
+                or clip
+            )
+            vae = (
+                self._pick_from_available(
+                    [vae, _CLOUD_DEFAULT_ZIMAGE_VAE],
+                    substrings=["ae.safetensors", "/ae."],
+                )
+                or vae
             )
 
-        return {
+        refs = [n for n in (reference_image_names or []) if n][:3]
+        workflow: Dict[str, Any] = {
             "28": {
                 "inputs": {
                     "unet_name": unet,
@@ -148,14 +334,6 @@ class ComfyUIClient:
                 "inputs": {"vae_name": vae},
                 "class_type": "VAELoader",
             },
-            "27": {
-                "inputs": {"text": prompt, "clip": ["30", 0]},
-                "class_type": "CLIPTextEncode",
-            },
-            "33": {
-                "inputs": {"conditioning": ["27", 0]},
-                "class_type": "ConditioningZeroOut",
-            },
             "13": {
                 "inputs": {
                     "width": width,
@@ -167,21 +345,6 @@ class ComfyUIClient:
             "11": {
                 "inputs": {"model": ["28", 0], "shift": 3.0},
                 "class_type": "ModelSamplingAuraFlow",
-            },
-            "3": {
-                "inputs": {
-                    "seed": seed,
-                    "steps": steps,
-                    "cfg": cfg_scale,
-                    "sampler_name": "res_multistep",
-                    "scheduler": "simple",
-                    "denoise": 1.0,
-                    "model": ["11", 0],
-                    "positive": ["27", 0],
-                    "negative": ["33", 0],
-                    "latent_image": ["13", 0],
-                },
-                "class_type": "KSampler",
             },
             "8": {
                 "inputs": {"samples": ["3", 0], "vae": ["29", 0]},
@@ -196,6 +359,61 @@ class ComfyUIClient:
             },
         }
 
+        positive_src: Any = ["27", 0]
+        if refs:
+            # Identity via Omni image inputs only.
+            # Do NOT use ReferenceLatent / VAEEncode here — Z-Image packed latents
+            # mismatch photo VAE shapes (reshape errors on Cloud).
+            identity_prompt = (
+                f"{prompt}. The person in the reference photo is the lead singer — "
+                f"same face, bone structure, hair, skin tone, age, and distinctive features. "
+                f"Do not invent a different person."
+            )
+            omni_inputs: Dict[str, Any] = {
+                "clip": ["30", 0],
+                "prompt": identity_prompt,
+                "auto_resize_images": True,
+                # Intentionally omit `vae` — wiring it triggers latent packing bugs
+                # with mismatched reference photo resolutions on Comfy Cloud.
+            }
+            for i, name in enumerate(refs):
+                node_id = str(40 + i)
+                workflow[node_id] = {
+                    "inputs": {"image": name},
+                    "class_type": "LoadImage",
+                }
+                omni_inputs[f"image{i + 1}"] = [node_id, 0]
+            workflow["27"] = {
+                "inputs": omni_inputs,
+                "class_type": "TextEncodeZImageOmni",
+            }
+        else:
+            workflow["27"] = {
+                "inputs": {"text": prompt, "clip": ["30", 0]},
+                "class_type": "CLIPTextEncode",
+            }
+
+        workflow["33"] = {
+            "inputs": {"conditioning": positive_src},
+            "class_type": "ConditioningZeroOut",
+        }
+        workflow["3"] = {
+            "inputs": {
+                "seed": seed,
+                "steps": steps,
+                "cfg": cfg_scale,
+                "sampler_name": "res_multistep",
+                "scheduler": "simple",
+                "denoise": 1.0,
+                "model": ["11", 0],
+                "positive": positive_src,
+                "negative": ["33", 0],
+                "latent_image": ["13", 0],
+            },
+            "class_type": "KSampler",
+        }
+        return workflow
+
     def _build_sdxl_turbo_workflow(
         self,
         prompt: str,
@@ -205,15 +423,20 @@ class ComfyUIClient:
         cfg_scale: float = 1.5,
         steps: int = 4,
         ckpt: Optional[str] = None,
+        reference_image_names: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """SDXL Turbo / fused-checkpoint fallback workflow."""
+        """SDXL Turbo / fused-checkpoint fallback workflow.
+
+        With a reference still, applies IPAdapter FaceID Plus V2 for identity lock.
+        """
         if seed is None:
             seed = int(time.time()) % (2**32)
 
         ckpt = ckpt or (
             _CLOUD_DEFAULT_TURBO if self.backend == "cloud" else self._default_ckpt("turbo")
         )
-        return {
+        refs = [n for n in (reference_image_names or []) if n][:1]
+        workflow: Dict[str, Any] = {
             "1": {
                 "inputs": {"text": prompt, "clip": ["5", 1]},
                 "class_type": "CLIPTextEncode",
@@ -229,21 +452,6 @@ class ComfyUIClient:
                     "batch_size": 1,
                 },
                 "class_type": "EmptyLatentImage",
-            },
-            "4": {
-                "inputs": {
-                    "seed": seed,
-                    "steps": steps,
-                    "cfg": cfg_scale,
-                    "sampler_name": "euler_ancestral",
-                    "scheduler": "sgm_uniform",
-                    "denoise": 1.0,
-                    "model": ["5", 0],
-                    "positive": ["1", 0],
-                    "negative": ["2", 0],
-                    "latent_image": ["3", 0],
-                },
-                "class_type": "KSampler",
             },
             "5": {
                 "inputs": {"ckpt_name": ckpt},
@@ -261,6 +469,55 @@ class ComfyUIClient:
                 "class_type": "SaveImage",
             },
         }
+
+        model_src: Any = ["5", 0]
+        if refs:
+            workflow["20"] = {
+                "inputs": {"image": refs[0]},
+                "class_type": "LoadImage",
+            }
+            workflow["21"] = {
+                "inputs": {
+                    "model": ["5", 0],
+                    "preset": "FACEID PLUS V2",
+                    "lora_strength": 0.7,
+                    "provider": "CUDA",
+                },
+                "class_type": "IPAdapterUnifiedLoaderFaceID",
+            }
+            workflow["22"] = {
+                "inputs": {
+                    "model": ["21", 0],
+                    "ipadapter": ["21", 1],
+                    "image": ["20", 0],
+                    "weight": 0.85,
+                    "weight_faceidv2": 0.85,
+                    "weight_type": "linear",
+                    "combine_embeds": "concat",
+                    "start_at": 0.0,
+                    "end_at": 1.0,
+                    "embeds_scaling": "V only",
+                },
+                "class_type": "IPAdapterFaceID",
+            }
+            model_src = ["22", 0]
+
+        workflow["4"] = {
+            "inputs": {
+                "seed": seed,
+                "steps": steps,
+                "cfg": cfg_scale,
+                "sampler_name": "euler_ancestral",
+                "scheduler": "sgm_uniform",
+                "denoise": 1.0,
+                "model": model_src,
+                "positive": ["1", 0],
+                "negative": ["2", 0],
+                "latent_image": ["3", 0],
+            },
+            "class_type": "KSampler",
+        }
+        return workflow
 
     # ── text-to-image (FLUX Dev fallback) ─────────────────────────────────
 
@@ -721,6 +978,174 @@ class ComfyUIClient:
             },
         }
 
+    def _build_infinitetalk_workflow(
+        self,
+        image_name: str,
+        audio_name: str,
+        prompt: str,
+        num_frames: int = 81,
+        seed: Optional[int] = None,
+        width: int = 832,
+        height: int = 480,
+        previous_frames_name: Optional[str] = None,
+        negative_prompt: str = (
+            "blurry face, identity drift, morphing features, distorted mouth, "
+            "extra limbs, watermark, subtitles, low quality, frozen expression"
+        ),
+    ) -> Dict[str, Any]:
+        """Native Wan2.1 InfiniteTalk: image + audio → face/performance lip-sync video.
+
+        Based on ComfyUI WanInfiniteTalkToVideo (single speaker), matching the
+        InfiniteTalk Music template: close-up / head-focused singing performance.
+        """
+        if not audio_name:
+            raise ValueError("InfiniteTalk requires an audio input")
+        if seed is None:
+            seed = int(time.time()) % (2**32)
+
+        # Wan length is 4n+1
+        length = max(5, int(num_frames))
+        if (length - 1) % 4 != 0:
+            length = ((length - 1) // 4) * 4 + 1
+
+        width = max(16, (int(width) // 16) * 16)
+        height = max(16, (int(height) // 16) * 16)
+
+        unet = os.getenv("COMFY_INFINITETALK_UNET", _DEFAULT_INFINITETALK_UNET)
+        patch = os.getenv("COMFY_INFINITETALK_PATCH", _DEFAULT_INFINITETALK_PATCH)
+        clip_name = os.getenv("COMFY_WAN_CLIP", _DEFAULT_WAN_CLIP)
+        vae_name = os.getenv("COMFY_WAN_VAE", _DEFAULT_WAN_VAE)
+        clip_vision = os.getenv("COMFY_WAN_CLIP_VISION", _DEFAULT_WAN_CLIP_VISION)
+        audio_enc = os.getenv("COMFY_INFINITETALK_AUDIO_ENC", _DEFAULT_INFINITETALK_AUDIO_ENC)
+        steps = int(os.getenv("COMFY_INFINITETALK_STEPS", "24"))
+        cfg = float(os.getenv("COMFY_INFINITETALK_CFG", "5.0"))
+        shift = float(os.getenv("COMFY_INFINITETALK_SHIFT", "8.0"))
+        fps = float(os.getenv("COMFY_INFINITETALK_FPS", "25"))
+        audio_scale = float(os.getenv("COMFY_INFINITETALK_AUDIO_SCALE", "1.35"))
+        motion_frames = int(os.getenv("COMFY_INFINITETALK_MOTION_FRAMES", "9"))
+
+        workflow: Dict[str, Any] = {
+            "1": {"inputs": {"image": image_name}, "class_type": "LoadImage"},
+            "2": {"inputs": {"audio": audio_name}, "class_type": "LoadAudio"},
+            "10": {
+                "inputs": {"unet_name": unet, "weight_dtype": "default"},
+                "class_type": "UNETLoader",
+            },
+            "11": {
+                "inputs": {"name": patch},
+                "class_type": "ModelPatchLoader",
+            },
+            "12": {
+                "inputs": {
+                    "clip_name": clip_name,
+                    "type": "wan",
+                    "device": "default",
+                },
+                "class_type": "CLIPLoader",
+            },
+            "13": {
+                "inputs": {"vae_name": vae_name},
+                "class_type": "VAELoader",
+            },
+            "14": {
+                "inputs": {"clip_name": clip_vision},
+                "class_type": "CLIPVisionLoader",
+            },
+            "15": {
+                "inputs": {
+                    "clip_vision": ["14", 0],
+                    "image": ["1", 0],
+                    "crop": "center",
+                },
+                "class_type": "CLIPVisionEncode",
+            },
+            "16": {
+                "inputs": {"audio_encoder_name": audio_enc},
+                "class_type": "AudioEncoderLoader",
+            },
+            "17": {
+                "inputs": {
+                    "audio_encoder": ["16", 0],
+                    "audio": ["2", 0],
+                },
+                "class_type": "AudioEncoderEncode",
+            },
+            "20": {
+                "inputs": {"text": prompt, "clip": ["12", 0]},
+                "class_type": "CLIPTextEncode",
+            },
+            "21": {
+                "inputs": {"text": negative_prompt, "clip": ["12", 0]},
+                "class_type": "CLIPTextEncode",
+            },
+            "30": {
+                "inputs": {
+                    "mode": "single_speaker",
+                    "model": ["10", 0],
+                    "model_patch": ["11", 0],
+                    "positive": ["20", 0],
+                    "negative": ["21", 0],
+                    "vae": ["13", 0],
+                    "width": width,
+                    "height": height,
+                    "length": length,
+                    "audio_encoder_output_1": ["17", 0],
+                    "motion_frame_count": motion_frames,
+                    "audio_scale": audio_scale,
+                    "clip_vision_output": ["15", 0],
+                    "start_image": ["1", 0],
+                },
+                "class_type": "WanInfiniteTalkToVideo",
+            },
+            "31": {
+                "inputs": {"model": ["30", 0], "shift": shift},
+                "class_type": "ModelSamplingSD3",
+            },
+            "40": {
+                "inputs": {
+                    "model": ["31", 0],
+                    "seed": seed,
+                    "steps": steps,
+                    "cfg": cfg,
+                    "sampler_name": "uni_pc",
+                    "scheduler": "simple",
+                    "positive": ["30", 1],
+                    "negative": ["30", 2],
+                    "latent_image": ["30", 3],
+                    "denoise": 1.0,
+                },
+                "class_type": "KSampler",
+            },
+            "50": {
+                "inputs": {"samples": ["40", 0], "vae": ["13", 0]},
+                "class_type": "VAEDecode",
+            },
+            "51": {
+                "inputs": {
+                    "images": ["50", 0],
+                    "fps": fps,
+                    "audio": ["2", 0],
+                },
+                "class_type": "CreateVideo",
+            },
+            "52": {
+                "inputs": {
+                    "video": ["51", 0],
+                    "filename_prefix": "vidmuse_infinitetalk",
+                    "format": "mp4",
+                    "codec": "h264",
+                },
+                "class_type": "SaveVideo",
+            },
+        }
+        if previous_frames_name:
+            workflow["3"] = {
+                "inputs": {"image": previous_frames_name},
+                "class_type": "LoadImage",
+            }
+            workflow["30"]["inputs"]["previous_frames"] = ["3", 0]
+        return workflow
+
     async def generate_video_i2v(
         self,
         image_path: str,
@@ -731,13 +1156,15 @@ class ComfyUIClient:
         duration: Optional[float] = None,
         width: int = 768,
         height: int = 512,
+        backend: Optional[str] = None,
+        previous_frames_path: Optional[str] = None,
     ) -> Optional[str]:
-        """Generate image+audio→video via native ComfyUI (LTX-2.3 default, HuMo fallback)."""
+        """Generate image+audio→video via native ComfyUI backends."""
         if not audio_path or not Path(audio_path).is_file():
             print("[ComfyUI] image+audio video requires a local audio_path")
             return None
 
-        backend = (os.getenv("COMFY_VIDEO_BACKEND") or "ltx23").strip().lower()
+        backend = (backend or os.getenv("COMFY_VIDEO_BACKEND") or "infinitetalk").strip().lower()
         headers = self._headers()
         async with aiohttp.ClientSession(headers=headers) as session:
             image_name = await self._upload_input_file(session, image_path, "image")
@@ -747,8 +1174,42 @@ class ComfyUIClient:
             if not audio_name:
                 print("[ComfyUI] audio upload failed; cannot run A/V i2v")
                 return None
+            prev_name = None
+            if previous_frames_path and Path(previous_frames_path).is_file():
+                prev_name = await self._upload_input_file(
+                    session, previous_frames_path, "image"
+                )
 
-        if backend in ("humo", "wan", "wan-humo"):
+        if backend in ("infinitetalk", "infinite-talk", "wan-infinitetalk", "talk"):
+            fps = float(os.getenv("COMFY_INFINITETALK_FPS", "25"))
+            frames = num_frames
+            if duration is not None:
+                frames = max(5, int(round(float(duration) * fps)))
+                if (frames - 1) % 4 != 0:
+                    frames = ((frames - 1) // 4) * 4 + 1
+            frames = min(frames, int(os.getenv("COMFY_INFINITETALK_MAX_FRAMES", "81")))
+            if (frames - 1) % 4 != 0:
+                frames = ((frames - 1) // 4) * 4 + 1
+            # Face/head performance default: portrait 480×832 unless landscape requested
+            out_w, out_h = 480, 832
+            if width >= height and width >= 640:
+                out_w, out_h = 832, 480
+            talk_prompt = (
+                f"{prompt}, singing to camera, close-up on face and head, "
+                f"sings with accurate lip sync to the audio, expressive performance, "
+                f"consistent identity"
+            )
+            workflow = self._build_infinitetalk_workflow(
+                image_name=image_name,
+                audio_name=audio_name,
+                prompt=talk_prompt,
+                num_frames=frames,
+                seed=seed,
+                width=out_w,
+                height=out_h,
+                previous_frames_name=prev_name,
+            )
+        elif backend in ("humo", "wan", "wan-humo"):
             fps = float(os.getenv("COMFY_HUMO_FPS", "25"))
             frames = num_frames
             if duration is not None:
@@ -773,7 +1234,6 @@ class ComfyUIClient:
             frames = num_frames if duration is None else max(9, int(round(float(duration) * fps)))
             if (frames - 1) % 8 != 0:
                 frames = ((frames - 1) // 8) * 8 + 1
-            # Cap very long slices — LTX comfort zone is ~4s (97 @ 24fps)
             frames = min(frames, int(os.getenv("COMFY_LTX_MAX_FRAMES", "97")))
             if (frames - 1) % 8 != 0:
                 frames = ((frames - 1) // 8) * 8 + 1
@@ -792,9 +1252,9 @@ class ComfyUIClient:
             )
 
         path = await self._dispatch_workflow(workflow, wait_timeout=1200)
-        # Soft-fallback: if LTX fails, try HuMo once
+        # Soft-fallback chain: InfiniteTalk/LTX → HuMo
         if not path and backend not in ("humo", "wan", "wan-humo"):
-            print("[ComfyUI] LTX-2.3 failed — falling back to HuMo lip-sync")
+            print(f"[ComfyUI] {backend} failed — falling back to HuMo lip-sync")
             fps = float(os.getenv("COMFY_HUMO_FPS", "25"))
             frames = max(9, int(round(float(duration or 2.0) * fps)))
             if (frames - 1) % 4 != 0:
@@ -810,6 +1270,178 @@ class ComfyUIClient:
             )
             path = await self._dispatch_workflow(workflow, wait_timeout=900)
         return path
+
+    @staticmethod
+    def _parse_text_output(outputs: Dict[str, Any]) -> Optional[str]:
+        """Extract first text/string payload from ComfyUI history/job outputs."""
+        if not isinstance(outputs, dict):
+            return None
+
+        def from_node(node_out: Any) -> Optional[str]:
+            if isinstance(node_out, str) and node_out.strip():
+                return node_out.strip()
+            if not isinstance(node_out, dict):
+                return None
+            for key in ("text", "string", "strings", "srt_text"):
+                val = node_out.get(key)
+                if isinstance(val, list) and val:
+                    joined = "\n".join(str(x) for x in val if str(x).strip()).strip()
+                    if joined:
+                        return joined
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+            ui = node_out.get("ui") or {}
+            if isinstance(ui, dict):
+                for key in ("text", "string"):
+                    val = ui.get(key)
+                    if isinstance(val, list) and val:
+                        joined = "\n".join(str(x) for x in val if str(x).strip()).strip()
+                        if joined:
+                            return joined
+            return None
+
+        # Prefer PreviewAny / text nodes; also accept Whisper node keys
+        for node_id, node_out in outputs.items():
+            text = from_node(node_out)
+            if text:
+                return text
+        return from_node(outputs)
+
+    async def _dispatch_workflow_outputs(
+        self,
+        workflow: Dict[str, Any],
+        wait_timeout: int = 600,
+    ) -> Optional[Dict[str, Any]]:
+        """Submit workflow and return raw outputs dict (no file download)."""
+        headers = self._headers()
+        payload = self._prompt_payload(workflow)
+        async with aiohttp.ClientSession(headers=headers) as session:
+            submit_urls = [f"{self.url}/api/prompt", f"{self.url}/prompt"]
+            prompt_id = None
+            for submit_url in submit_urls:
+                async with session.post(submit_url, json=payload) as resp:
+                    if resp.status == 404:
+                        continue
+                    body = await resp.text()
+                    if resp.status != 200:
+                        print(f"[ComfyUI] submit failed ({resp.status}): {body[:400]}")
+                        return None
+                    try:
+                        data = json.loads(body)
+                    except Exception:
+                        return None
+                    prompt_id = data.get("prompt_id")
+                    break
+            if not prompt_id:
+                return None
+            print(f"[ComfyUI] lyrics job submitted: {prompt_id} ({self.backend})")
+            if self.backend == "cloud":
+                return await self._wait_cloud_job(session, prompt_id, wait_timeout)
+            # Local history poll
+            start = time.time()
+            while time.time() - start < wait_timeout:
+                async with session.get(f"{self.url}/history/{prompt_id}") as resp:
+                    if resp.status == 200:
+                        hist = await resp.json()
+                        entry = hist.get(prompt_id) if isinstance(hist, dict) else None
+                        if isinstance(entry, dict) and entry.get("outputs"):
+                            return entry.get("outputs")
+                await asyncio.sleep(1.5)
+            return None
+
+    async def transcribe_lyrics(
+        self,
+        audio_path: str,
+        model_size: Optional[str] = None,
+        language: str = "English",
+    ) -> Dict[str, Any]:
+        """Transcribe song lyrics via ComfyUI AudioSpeechToTextWhisper.
+
+        Returns {text, srt, cues} — empty text on failure.
+        """
+        empty = {"text": "", "srt": "", "cues": []}
+        if not audio_path or not Path(audio_path).is_file():
+            return empty
+
+        model_size = (model_size or os.getenv("VIDMUSE_WHISPER_SIZE", "base")).strip()
+        language = (os.getenv("VIDMUSE_WHISPER_LANGUAGE") or language or "English").strip()
+        # Prefer English for music videos unless auto
+        if language.lower() in ("auto", "auto-detect"):
+            language = "Auto-Detect"
+
+        headers = self._headers()
+        async with aiohttp.ClientSession(headers=headers) as session:
+            audio_name = await self._upload_input_file(session, audio_path, "audio")
+            if not audio_name:
+                print("[ComfyUI] lyrics: audio upload failed")
+                return empty
+
+        workflow = {
+            "1": {"inputs": {"audio": audio_name}, "class_type": "LoadAudio"},
+            "2": {
+                "inputs": {
+                    "audio": ["1", 0],
+                    "model_size": model_size,
+                    "language": language,
+                    "task": "Transcribe",
+                    "generate_srt": True,
+                    "srt_max_line_len": 80,
+                    "srt_max_lines": 2,
+                    "srt_max_duration_sec": 6.0,
+                },
+                "class_type": "AudioSpeechToTextWhisper",
+            },
+            # Capture plain transcript
+            "3": {
+                "inputs": {"source": ["2", 0]},
+                "class_type": "PreviewAny",
+            },
+            # Capture SRT track
+            "4": {
+                "inputs": {"source": ["2", 1]},
+                "class_type": "PreviewAny",
+            },
+        }
+
+        outputs = await self._dispatch_workflow_outputs(workflow, wait_timeout=900)
+        if not outputs:
+            print("[ComfyUI] lyrics: no outputs")
+            return empty
+
+        # Node 3 = full text, node 4 = srt (keys may be string ids)
+        text = ""
+        srt = ""
+        for key, node_out in outputs.items():
+            parsed = self._parse_text_output({key: node_out})
+            if not parsed:
+                continue
+            # Heuristic: SRT has --> arrows
+            if "-->" in parsed:
+                srt = parsed
+            elif not text or len(parsed) > len(text):
+                text = parsed
+
+        # Fallbacks if heuristic missed
+        if not text:
+            text = self._parse_text_output(outputs) or ""
+        if text and "-->" in text and not srt:
+            srt = text
+            # strip rough SRT to plain lines
+            plain_lines = []
+            for line in text.splitlines():
+                line = line.strip()
+                if not line or line.isdigit() or "-->" in line:
+                    continue
+                plain_lines.append(line)
+            text = "\n".join(plain_lines)
+
+        from server.lyrics import parse_srt
+
+        cues = parse_srt(srt) if srt else []
+        print(
+            f"[ComfyUI] lyrics: {len(text)} chars, {len(cues)} timed cues"
+        )
+        return {"text": text.strip(), "srt": srt.strip(), "cues": cues}
 
     # Back-compat alias used by older call sites
     def _build_wan_i2v_workflow(self, *args, **kwargs) -> Dict[str, Any]:
@@ -902,7 +1534,12 @@ class ComfyUIClient:
                     if resp.status == 200:
                         status_data = await resp.json()
                         status = status_data.get("status") or status_data.get("state")
-                        if status in ("failed", "cancelled", "error"):
+                        if status in (
+                            "failed",
+                            "cancelled",
+                            "error",
+                            "non_retryable_error",
+                        ):
                             # Pull detail for logging
                             err = status_data
                             async with session.get(
@@ -1110,16 +1747,178 @@ class ComfyUIClient:
 
     # ── high-level methods ────────────────────────────────────────────────
 
+    def _prepare_identity_ref(self, path: str | Path, size: int = 768) -> Path:
+        """Normalize a face still to a square JPEG for Omni (stable sizing)."""
+        src = Path(path)
+        out_dir = OUTPUT_DIR / "identity_prep"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dest = out_dir / f"{src.stem}_id{size}.jpg"
+        if dest.is_file() and dest.stat().st_mtime >= src.stat().st_mtime:
+            return dest
+        try:
+            from PIL import Image
+
+            with Image.open(src) as im:
+                im = im.convert("RGB")
+                w, h = im.size
+                side = min(w, h)
+                left = (w - side) // 2
+                top = (h - side) // 2
+                im = im.crop((left, top, left + side, top + side))
+                im = im.resize((size, size), Image.Resampling.LANCZOS)
+                im.save(dest, format="JPEG", quality=92)
+            return dest
+        except Exception as e:
+            print(f"[ComfyUI] identity prep failed ({e}), using original")
+            return src
+
+    def _prepare_performance_portrait(
+        self,
+        path: str | Path,
+        width: int = 480,
+        height: int = 832,
+    ) -> Path:
+        """Crop/pad a still to InfiniteTalk portrait aspect (default 480×832)."""
+        src = Path(path)
+        out_dir = OUTPUT_DIR / "identity_prep"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dest = out_dir / f"{src.stem}_portrait_{width}x{height}.jpg"
+        if dest.is_file() and dest.stat().st_mtime >= src.stat().st_mtime:
+            return dest
+        try:
+            from PIL import Image
+
+            with Image.open(src) as im:
+                im = im.convert("RGB")
+                target_aspect = width / float(height)
+                w, h = im.size
+                src_aspect = w / float(h)
+                if src_aspect > target_aspect:
+                    # too wide — crop sides, keep center face
+                    new_w = int(h * target_aspect)
+                    left = (w - new_w) // 2
+                    im = im.crop((left, 0, left + new_w, h))
+                else:
+                    # too tall — crop top/bottom favoring upper body/face
+                    new_h = int(w / target_aspect)
+                    top = max(0, (h - new_h) // 5)
+                    im = im.crop((0, top, w, top + new_h))
+                im = im.resize((width, height), Image.Resampling.LANCZOS)
+                im.save(dest, format="JPEG", quality=92)
+            return dest
+        except Exception as e:
+            print(f"[ComfyUI] performance portrait prep failed ({e})")
+            return src
+
     async def generate_image_turbo(
         self,
         prompt: str,
         width: int = 1024,
         height: int = 576,
         seed: Optional[int] = None,
+        reference_image_paths: Optional[List[str]] = None,
     ) -> Optional[str]:
-        """Generate image using z-image turbo (fast, few steps)."""
-        workflow = self._build_zimage_turbo_workflow(prompt, width, height, seed)
-        return await self._dispatch_workflow(workflow, wait_timeout=120)
+        """Generate image using z-image turbo (fast, few steps).
+
+        Pass reference_image_paths to lock identity via TextEncodeZImageOmni.
+        FaceID is opt-in only (COMFY_IDENTITY_BACKEND=faceid) — Comfy Cloud often
+        lacks the FaceID LoRA / ClipVision weights.
+        """
+        if self.backend != "cloud":
+            await self.probe_available_models()
+
+        ref_names: List[str] = []
+        paths = [p for p in (reference_image_paths or []) if p and Path(p).is_file()][:3]
+        if paths:
+            headers = self._headers()
+            async with aiohttp.ClientSession(headers=headers) as session:
+                for path in paths:
+                    prepared = self._prepare_identity_ref(path)
+                    name = await self._upload_input_file(session, prepared, "image")
+                    if name:
+                        ref_names.append(name)
+            if ref_names:
+                print(f"[ComfyUI] identity refs uploaded: {ref_names}")
+            else:
+                print(f"[ComfyUI] WARNING: {len(paths)} ref path(s) on disk but upload failed")
+
+        force_sdxl = (
+            os.getenv("COMFY_IMAGE_BACKEND", "").strip().lower() == "sdxl"
+            or (self.backend != "cloud" and self._local_image_backend() == "sdxl")
+        )
+        identity_backend = os.getenv("COMFY_IDENTITY_BACKEND", "").strip().lower()
+        prefer_faceid = bool(ref_names) and identity_backend in ("faceid", "sdxl")
+
+        if prefer_faceid or force_sdxl:
+            workflow = self._build_sdxl_turbo_workflow(
+                prompt,
+                width,
+                height,
+                seed,
+                reference_image_names=ref_names or None,
+            )
+            path = await self._dispatch_workflow(workflow, wait_timeout=180)
+            if path:
+                return path
+            if force_sdxl and self.backend != "cloud":
+                print(
+                    "[ComfyUI] Local SDXL checkpoint failed — "
+                    f"available models: {(self._available_models or [])[:8]}"
+                )
+
+        # Primary: Z-Image (+ Omni when refs present)
+        workflow = self._build_zimage_turbo_workflow(
+            prompt,
+            width,
+            height,
+            seed,
+            reference_image_names=ref_names or None,
+        )
+        path = await self._dispatch_workflow(workflow, wait_timeout=180)
+        if path:
+            return path
+
+        # Omni failed — do NOT auto-try FaceID on Cloud (missing LoRA/ClipVision).
+        # Fall back to plain Z-Image so storyboard frames still render.
+        if ref_names:
+            print(
+                "[ComfyUI] Z-Image Omni identity failed — falling back to text-only Z-Image "
+                "(set COMFY_IDENTITY_BACKEND=faceid only if FaceID models are installed)"
+            )
+            workflow = self._build_zimage_turbo_workflow(
+                prompt,
+                width,
+                height,
+                seed,
+                reference_image_names=None,
+            )
+            path = await self._dispatch_workflow(workflow, wait_timeout=180)
+            if path:
+                return path
+
+        if prefer_faceid and ref_names:
+            print("[ComfyUI] retrying SDXL FaceID (explicit COMFY_IDENTITY_BACKEND)")
+            workflow = self._build_sdxl_turbo_workflow(
+                prompt,
+                width,
+                height,
+                seed,
+                reference_image_names=ref_names,
+            )
+            return await self._dispatch_workflow(workflow, wait_timeout=180)
+
+        # Local / AI Playground: if Z-Image stack is missing, fall back to any fused checkpoint.
+        if self.backend != "cloud":
+            print("[ComfyUI] Falling back to local fused checkpoint workflow")
+            workflow = self._build_sdxl_turbo_workflow(
+                prompt,
+                width,
+                height,
+                seed,
+                reference_image_names=None,
+            )
+            return await self._dispatch_workflow(workflow, wait_timeout=180)
+        return None
 
     async def generate_image_flux(
         self,
@@ -1491,6 +2290,23 @@ class ComfyUIClient:
                             data = await resp.json()
                             result["gpu"] = data.get("gpu", {})
                             result["free_memory"] = data.get("free_memory", {})
+                            models = await self.probe_available_models(force=True)
+                            result["models"] = models[:100]
+                            result["model_count"] = len(models)
+                            result["resolved_turbo_ckpt"] = self._default_ckpt("turbo")
+                            result["local_image_backend"] = self._local_image_backend()
+                            if self._model_probe_error:
+                                result["model_probe_error"] = self._model_probe_error
+                            try:
+                                async with session.get(f"{self.url}/queue") as queue_resp:
+                                    if queue_resp.status == 200:
+                                        queue = await queue_resp.json()
+                                        result["queue"] = {
+                                            "running": len(queue.get("queue_running") or []),
+                                            "pending": len(queue.get("queue_pending") or []),
+                                        }
+                            except Exception:
+                                pass
                     elif backend != "cloud":
                         async with session.post(
                             f"{self.url}/prompt",
@@ -1501,4 +2317,26 @@ class ComfyUIClient:
         except Exception as e:
             result["error"] = str(e)
 
+        if backend in ("ai-playground", "local"):
+            try:
+                from server.hardware_detect.intel_xpu import (
+                    detect_intel_xpu,
+                    recommended_comfy_url,
+                )
+
+                info = detect_intel_xpu()
+                result["ai_playground_path"] = (
+                    str(info.ai_playground_path) if info.ai_playground_path else None
+                )
+                result["comfyui_path"] = (
+                    str(info.comfyui_path) if info.comfyui_path else None
+                )
+                result["recommended_url"] = recommended_comfy_url(info)
+                if backend == "ai-playground" and not info.comfyui_path:
+                    result["start_hint"] = (
+                        "Start Intel AI Playground's ComfyUI server, then set "
+                        "COMFYUI_URL to its queue (usually http://localhost:8188)."
+                    )
+            except Exception as detect_exc:
+                result["detection_error"] = str(detect_exc)
         return result
