@@ -257,6 +257,18 @@ def find_ai_playground() -> Optional[Path]:
     return info.ai_playground_path
 
 
+def recommended_comfy_url(info: Optional[GPUInfo] = None) -> str:
+    """Return the Comfy queue URL to use for local / AI Playground installs."""
+    explicit = (os.getenv("COMFYUI_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    info = info or detect_intel_xpu()
+    # AI Playground's bundled ComfyUI typically listens on 8188 once started.
+    if info.comfyui_path or info.ai_playground_path:
+        return "http://localhost:8188"
+    return "http://localhost:8188"
+
+
 def find_comfyui_xpu_install() -> Optional[Path]:
     """Find ComfyUI with XPU support. Convenience wrapper."""
     info = detect_intel_xpu()

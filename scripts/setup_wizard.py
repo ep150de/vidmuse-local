@@ -351,7 +351,7 @@ def write_env(config: Dict[str, str]) -> None:
         "OUTPUT_DIR=./outputs",
         "",
         f"OLLAMA_API_KEY={base.get('OLLAMA_API_KEY', '')}",
-        f"OLLAMA_MODEL={base.get('OLLAMA_MODEL', 'deepseek-v4-flash')}",
+        f"OLLAMA_MODEL={base.get('OLLAMA_MODEL', 'gemma4:31b')}",
         f"LLM_PROVIDER={base.get('LLM_PROVIDER', 'ollama')}",
         f"LLM_FALLBACK={base.get('LLM_FALLBACK', 'opencode-go')}",
         "",
@@ -492,10 +492,10 @@ def step_cloud_keys() -> Dict[str, str]:
 
     clear()
     title("Cloud models")
-    info("Tip: large models like gpt-oss:120b often need a paid Ollama plan.")
+    info("Tip: deepseek-v4-flash/pro need Ollama Pro; free-tier defaults to gemma4:31b.")
     config["OLLAMA_MODEL"] = ask(
         "Ollama model (free-tier friendly default)",
-        default="deepseek-v4-flash",
+        default="gemma4:31b",
     )
     config["OPENCODE_MODEL"] = ask("OpenCode fallback model", default="deepseek-v4-flash")
     use_fallback = yes_no(
@@ -536,7 +536,19 @@ def step_local_config() -> Dict[str, str]:
         "COMFY_CLOUD_API_KEY": "",
     }
     config["OLLAMA_MODEL"] = ask("Ollama model to use", default="qwen2.5:32b")
-    config["COMFYUI_URL"] = ask("ComfyUI URL", default="http://localhost:8188")
+    engine = ask(
+        "Comfy engine [local / ai-playground]",
+        default="local",
+    ).strip().lower()
+    if engine in ("ai-playground", "ai_playground", "playground", "intel"):
+        config["COMFYUI_BACKEND"] = "ai-playground"
+        info(
+            "Start Intel AI Playground's ComfyUI server before generating. "
+            "It usually exposes http://localhost:8188."
+        )
+    else:
+        config["COMFYUI_BACKEND"] = "local"
+    config["COMFYUI_URL"] = ask("ComfyUI queue URL", default="http://localhost:8188")
     # Optional: still collect OpenCode as manual override later
     if yes_no("Also configure OpenCode Go as optional LLM fallback?", default=False):
         config["OPENCODE_API_KEY"] = ask("OpenCode Go API key", secret=True)

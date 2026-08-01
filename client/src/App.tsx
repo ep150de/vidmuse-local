@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { api } from "./api";
-import { UploadScreen } from "./components/UploadScreen";
+import { UploadScreen, type UploadPayload } from "./components/UploadScreen";
 import { ChatInterface } from "./components/ChatInterface";
 import { ConceptSelector } from "./components/ConceptSelector";
 import { StoryboardGrid } from "./components/StoryboardGrid";
@@ -18,6 +18,9 @@ export default function App() {
   const [progress, setProgress] = useState({ phase: "", progress: 0, status: "" });
   const [serverHealth, setServerHealth] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadingHint, setLoadingHint] = useState<string>("");
+  const [technicalQc, setTechnicalQc] = useState<any>(null);
+
 
   useEffect(() => {
     api
@@ -30,33 +33,80 @@ export default function App() {
     });
   }, []);
 
-  const handleUploadComplete = async (
-    audioFile: File,
-    imageFiles: File[],
-    prompt: string
-  ) => {
+  const handleUploadComplete = async (payload: UploadPayload) => {
     setIsLoading(true);
     setError(null);
+    setLoadingHint("Creating session…");
     try {
       const sid = await api.createSession();
       setSessionId(sid);
 
-      const audioRes = await api.uploadAudio(audioFile);
-      console.log("Audio analyzed:", audioRes.analysis);
+      setLoadingHint("Saving singer profile…");
+      await api.configureSession({
+        singer_profile: payload.singer,
+        video_backend: payload.videoBackend,
+        lyrics: payload.lyrics,
+        creative_direction: payload.prompt,
+        performance_mix: payload.performanceMix,
+        project_mode: payload.projectMode,
+        comfy_backend: payload.comfyBackend,
+        comfy_url: payload.comfyUrl,
+      });
 
-      if (imageFiles.length > 0) {
-        await api.uploadImages(imageFiles);
+      setLoadingHint(
+        payload.lyrics.trim()
+          ? "Analyzing audio…"
+          : "Analyzing audio + extracting lyrics from the track…"
+      );
+      const audioRes = await api.uploadAudio(payload.audio);
+      console.log("Audio analyzed:", audioRes.analysis);
+      const hasLyrics = Boolean(audioRes.analysis?.has_lyrics);
+
+      if (payload.images.length > 0) {
+        setLoadingHint("Uploading reference stills…");
+        await api.uploadImages(payload.images);
       }
 
-      await api.chat(`Create a music video for this song. Concept: ${prompt}`);
+      const singerBits = [
+        payload.singer.name && `singer ${payload.singer.name}`,
+        payload.singer.presentation,
+        payload.singer.age_range,
+        payload.singer.look,
+        payload.singer.framing,
+      ]
+        .filter(Boolean)
+        .join(", ");
 
-      setPhase("chat");
+      setLoadingHint("Briefing the director…");
+      await api.chat(
+        `Create a ${payload.projectMode === "typography" ? "typography-led lyric video" : "MTV-style music video"} for this song. Concept: ${payload.prompt}` +
+          (payload.projectMode === "mtv" && singerBits ? `\nSinger: ${singerBits}` : "") +
+          `\nProject mode: ${payload.projectMode}` +
+          `\nGeneration engine: ${payload.comfyBackend}` +
+          `\nAnimation model: ${payload.videoBackend}` +
+          (hasLyrics
+            ? "\nLyrics were captured — ground every concept in the lyrical story and imagery."
+            : "\nLyrics were not captured — ask clarifying questions about the song's meaning before proposing concepts.") +
+          (payload.projectMode === "mtv" && payload.images.length
+            ? "\nReference photo uploaded — lock the lead singer identity to that face."
+            : payload.projectMode === "mtv"
+              ? "\nNo reference photo — warn that face consistency will be weaker."
+              : "\nTreat exact lyrics as the protagonist; reserve text-safe composition space.")
+      );
+
+      // Fast path: with lyrics, go straight to concepts
+      if (hasLyrics || payload.lyrics.trim()) {
+        setPhase("concepts");
+      } else {
+        setPhase("chat");
+      }
     } catch (e) {
       console.error(e);
       const msg = e instanceof Error ? e.message : String(e);
       setError(`Upload failed: ${msg}`);
     } finally {
       setIsLoading(false);
+      setLoadingHint("");
     }
   };
 
@@ -87,7 +137,8 @@ export default function App() {
   const handleVideoComplete = async () => {
     setIsLoading(true);
     try {
-      await api.editFinal();
+      const result = await api.editFinal();
+      setTechnicalQc(result?.technical_qc || null);
       setPhase("final");
     } finally {
       setIsLoading(false);
@@ -95,29 +146,29 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen text-white">
+    <div className="min-h-screen text-[var(--ink)]">
       <Header serverHealth={serverHealth} />
 
       <main className="max-w-6xl mx-auto px-4 py-8">
         {phase !== "upload" && <PhaseIndicator current={phase} />}
 
         {error && (
-          <div className="mb-6 panel border-red-400/40 px-4 py-3 text-sm text-red-200">
+          <div className="mb-6 panel rounded-xl border-red-400/40 px-4 py-3 text-sm text-red-100">
             {error}
           </div>
         )}
 
         {isLoading && (
-          <div className="fixed inset-0 bg-navy-900/70 backdrop-blur-sm flex items-center justify-center z-50">
-            <div className="panel p-8 text-center min-w-[280px]">
-              <div className="mx-auto mb-4 h-12 w-12 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-              <p className="font-display text-sm tracking-wide">
-                {progress.status || "Working…"}
+          <div className="fixed inset-0 bg-[#070b14]/75 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="panel rounded-xl p-8 text-center min-w-[280px]">
+              <div className="mx-auto mb-4 h-12 w-12 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+              <p className="text-sm font-medium tracking-wide text-[var(--ink)]">
+                {loadingHint || progress.status || "Working…"}
               </p>
               {progress.progress > 0 && (
-                <div className="w-64 h-1.5 bg-navy-900 mt-4 overflow-hidden mx-auto">
+                <div className="w-64 h-1.5 bg-[var(--surface-2)] mt-4 overflow-hidden mx-auto rounded-full">
                   <div
-                    className="h-full bg-gradient-to-r from-cyan-400 to-gold-500 transition-all duration-300"
+                    className="h-full bg-gradient-to-r from-sky-400 to-amber-400 transition-all duration-300"
                     style={{ width: `${progress.progress}%` }}
                   />
                 </div>
@@ -144,6 +195,7 @@ export default function App() {
         {phase === "storyboard" && (
           <StoryboardGrid
             onApprove={handleStoryboardApproved}
+            onBackToConcepts={() => setPhase("concepts")}
             onError={setError}
           />
         )}
@@ -156,7 +208,7 @@ export default function App() {
         )}
 
         {phase === "final" && (
-          <FinalOutput downloadUrl={api.getDownloadUrl()} />
+          <FinalOutput downloadUrl={api.getDownloadUrl()} technicalQc={technicalQc} />
         )}
       </main>
 
@@ -198,13 +250,13 @@ function PhaseIndicator({ current }: { current: Phase }) {
               >
                 <span
                   className={`
-                    w-8 h-8 flex items-center justify-center text-sm font-display font-bold
+                    w-8 h-8 rounded-lg flex items-center justify-center text-sm font-display font-bold
                     transition-colors
                     ${active
-                      ? "bg-gradient-to-br from-cyan-300 to-cyan-500 text-navy-900 shadow-[0_0_16px_rgba(34,211,238,0.35)]"
+                      ? "bg-gradient-to-br from-sky-300 to-sky-500 text-[#071018] shadow-[0_0_16px_rgba(56,189,248,0.28)]"
                       : done
-                        ? "bg-cyan-400/90 text-navy-900"
-                        : "bg-navy-700/80 text-[var(--muted)] border border-cyan-500/20"
+                        ? "bg-sky-400/90 text-[#071018]"
+                        : "bg-[var(--surface-2)] text-[var(--muted)] border border-[var(--border)]"
                     }
                   `}
                 >
@@ -212,7 +264,7 @@ function PhaseIndicator({ current }: { current: Phase }) {
                 </span>
                 <span
                   className={`hidden sm:inline text-[11px] uppercase tracking-[0.16em] ${
-                    active || done ? "text-cyan-200" : "text-[var(--muted)]"
+                    active || done ? "text-[var(--ink)]" : "text-[var(--muted)]"
                   }`}
                 >
                   {phase.label}
@@ -221,7 +273,7 @@ function PhaseIndicator({ current }: { current: Phase }) {
               {i < phases.length - 1 && (
                 <div
                   className={`w-5 sm:w-8 h-px ${
-                    done ? "bg-gradient-to-r from-cyan-400 to-cyan-400/40" : "bg-cyan-500/15"
+                    done ? "bg-gradient-to-r from-sky-400 to-sky-400/40" : "bg-[var(--border)]"
                   }`}
                 />
               )}

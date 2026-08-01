@@ -1,10 +1,16 @@
-import { Download, Play, RotateCcw, Share2 } from "lucide-react";
+import { Download, Play, RotateCcw } from "lucide-react";
 
 interface Props {
   downloadUrl: string;
+  technicalQc?: {
+    passed?: boolean;
+    duration?: number;
+    expected_duration?: number;
+    duration_delta?: number | null;
+  } | null;
 }
 
-export function FinalOutput({ downloadUrl }: Props) {
+export function FinalOutput({ downloadUrl, technicalQc }: Props) {
   return (
     <div className="max-w-3xl mx-auto text-center">
       <div className="mb-8">
@@ -12,10 +18,26 @@ export function FinalOutput({ downloadUrl }: Props) {
           <Play className="w-10 h-10 text-green-400" />
         </div>
         <h2 className="text-3xl font-bold mb-2">Your Video is Ready!</h2>
-        <p className="text-gray-400">Synced to your music beats and ready to share.</p>
+        <p className="text-gray-400">
+          Muxed to your original master audio and ready to share.
+        </p>
+        {technicalQc && (
+          <p
+            className={`mt-3 text-xs font-mono ${
+              technicalQc.passed ? "text-emerald-300" : "text-amber-200"
+            }`}
+          >
+            Technical QC: {technicalQc.passed ? "passed" : "needs review"}
+            {technicalQc.duration != null
+              ? ` · ${technicalQc.duration.toFixed(1)}s`
+              : ""}
+            {technicalQc.duration_delta != null
+              ? ` · Δ ${technicalQc.duration_delta.toFixed(2)}s`
+              : ""}
+          </p>
+        )}
       </div>
 
-      {/* Video player */}
       <div className="rounded-xl overflow-hidden bg-black aspect-video mb-8 shadow-2xl shadow-cyan-500/10">
         <video
           src={downloadUrl}
@@ -25,7 +47,6 @@ export function FinalOutput({ downloadUrl }: Props) {
         />
       </div>
 
-      {/* Actions */}
       <div className="flex flex-wrap justify-center gap-4">
         <a
           href={downloadUrl}

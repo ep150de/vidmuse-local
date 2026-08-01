@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from server.llm.base import LLMBackend
+from server.llm.ollama_backend import CreditExhaustedError
 
 # Defaults only — always re-read env in __init__ so dotenv load order is safe.
 DEFAULT_OPENCODE_BASE_URL = "https://opencode.ai/zen/go/v1"
@@ -47,6 +48,20 @@ class OpenCodeGoBackend(LLMBackend):
             "Authorization": f"Bearer {self._api_key}",
         }
 
+    def _raise_if_credit(self, resp: requests.Response) -> None:
+        if resp.status_code in (401, 402, 403, 429):
+            raise CreditExhaustedError(
+                f"OpenCode {resp.status_code}: {resp.text[:300]}"
+            )
+        body = (resp.text or "").lower()
+        if resp.status_code >= 400 and any(
+            k in body
+            for k in ("quota", "credit", "billing", "insufficient", "unauthorized")
+        ):
+            raise CreditExhaustedError(
+                f"OpenCode {resp.status_code}: {resp.text[:300]}"
+            )
+
     async def chat(
         self,
         messages: List[Dict[str, str]],
@@ -60,6 +75,7 @@ class OpenCodeGoBackend(LLMBackend):
             json={"model": self._model, "messages": messages, "stream": False},
             timeout=self._timeout,
         )
+        self._raise_if_credit(resp)
         resp.raise_for_status()
         data = resp.json()
         choices = data.get("choices") or []

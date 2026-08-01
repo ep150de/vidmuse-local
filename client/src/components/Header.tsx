@@ -14,50 +14,62 @@ export function Header({ serverHealth }: Props) {
     serverHealth?.services?.llm?.backend || serverHealth?.services?.llm?.name;
   const comfy = serverHealth?.services?.comfyui?.backend;
   const comfyStatus = serverHealth?.services?.comfyui?.status;
+  const comfyUrl = serverHealth?.services?.comfyui?.url;
+  const queue = serverHealth?.services?.comfyui?.queue;
+  const modelCount = serverHealth?.services?.comfyui?.model_count;
 
+  const queueLabel =
+    queue && typeof queue.pending === "number"
+      ? ` · q ${queue.running || 0}/${queue.pending}`
+      : "";
   const resourceLabel =
-    mode === "cloud"
-      ? `Cloud · LLM ${llm || "?"} · Comfy ${comfy || "?"}${comfyStatus && comfyStatus !== "up" ? ` (${comfyStatus})` : ""}`
-      : `${gpu}${vram != null ? ` (${vram}GB)` : ""}`;
+    `LLM ${llm || "?"} · Comfy ${comfy || "?"}` +
+    (comfyStatus && comfyStatus !== "up" ? ` (${comfyStatus})` : "") +
+    (modelCount != null ? ` · ${modelCount} models` : "") +
+    queueLabel +
+    (mode !== "cloud" && gpu ? ` · ${gpu}${vram != null ? ` ${vram}GB` : ""}` : "");
 
   return (
-    <header className="border-b border-cyan-500/15 bg-[#070b1c]/75 backdrop-blur-md sticky top-0 z-30">
-      <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+    <header className="border-b border-[var(--border)] bg-[#070b14]/80 backdrop-blur-md sticky top-0 z-30">
+      <div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="w-9 h-9 bg-gradient-to-br from-cyan-300 via-cyan-400 to-gold-500 flex items-center justify-center shrink-0 shadow-[0_0_18px_rgba(34,211,238,0.25)]">
-            <span className="font-display font-bold text-navy-900 text-xs">VM</span>
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-300 via-sky-400 to-amber-400 flex items-center justify-center shrink-0">
+            <span className="font-display font-bold text-[#071018] text-xs">VM</span>
           </div>
           <div className="min-w-0">
-            <span className="font-display font-bold text-lg leading-none tracking-wide block truncate">
+            <span className="font-display font-semibold text-lg leading-none tracking-tight block truncate text-[var(--ink)]">
               VidMuse
             </span>
-            <span className="text-[10px] uppercase tracking-[0.22em] text-cyan-400/80">
-              {mode} · LTX-2.3
+            <span className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-secondary)]">
+              {mode} studio
             </span>
           </div>
         </div>
 
         <div className="flex items-center gap-4 text-xs shrink-0">
-          <div className="hidden sm:flex items-center gap-2 text-[var(--muted)]">
+          <div className="hidden sm:flex items-center gap-2 text-[var(--text-secondary)]">
             {mode === "cloud" ? (
-              <Cloud className="w-4 h-4 text-cyan-400" />
+              <Cloud className="w-4 h-4 text-[var(--accent)]" />
             ) : (
-              <Cpu className="w-4 h-4 text-gold-500" />
+              <Cpu className="w-4 h-4 text-amber-400" />
             )}
-            <span className="max-w-[220px] truncate" title={resourceLabel}>
+            <span
+              className="max-w-[280px] truncate"
+              title={`${resourceLabel}${comfyUrl ? ` · ${comfyUrl}` : ""}`}
+            >
               {resourceLabel}
             </span>
           </div>
           <div className="flex items-center gap-2">
             {isOnline ? (
               <>
-                <Wifi className="w-4 h-4 text-cyan-400" />
-                <span className="text-cyan-300 hidden md:inline">Online</span>
+                <Wifi className="w-4 h-4 text-emerald-400" />
+                <span className="text-emerald-300 hidden md:inline">Online</span>
               </>
             ) : (
               <>
                 <WifiOff className="w-4 h-4 text-red-400" />
-                <span className="text-red-400">Offline</span>
+                <span className="text-red-300">Offline</span>
               </>
             )}
           </div>

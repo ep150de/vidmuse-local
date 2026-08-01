@@ -187,3 +187,107 @@ class AudioAnalyzer:
                 }
             ]
         return scenes
+
+    @staticmethod
+    def build_coverage_timeline(
+        duration: float,
+        lyric_cues: List[Dict[str, Any]],
+        energy_profile: List[float] | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Build contiguous lyric/instrumental coverage across the complete song."""
+        duration = max(0.0, float(duration))
+        cues: List[Dict[str, Any]] = []
+        for cue in sorted(lyric_cues or [], key=lambda c: float(c.get("start") or 0)):
+            start = max(0.0, min(duration, float(cue.get("start") or 0)))
+            end = max(start, min(duration, float(cue.get("end") or start)))
+            text = str(cue.get("text") or "").strip()
+            if end > start and text:
+                cues.append({"start": start, "end": end, "text": text})
+
+        timeline: List[Dict[str, Any]] = []
+        cursor = 0.0
+
+        def add_interval(
+            start: float,
+            end: float,
+            kind: str,
+            text: str = "",
+        ) -> None:
+            if end - start <= 0.01:
+                return
+            midpoint = (start + end) / 2
+            if duration > 0 and energy_profile:
+                idx = min(
+                    len(energy_profile) - 1,
+                    max(0, int((midpoint / duration) * len(energy_profile))),
+                )
+                energy = float(energy_profile[idx])
+                peak = max(float(x) for x in energy_profile) or 1.0
+                normalized = min(1.0, max(0.0, energy / peak))
+            else:
+                normalized = 0.5
+            if kind == "lyric":
+                function = "carry vocal narrative"
+                sound = "lead vocal phrase"
+            elif start <= 0.05:
+                kind = "intro"
+                function = "establish visual world"
+                sound = "opening instrumental"
+            elif end >= duration - 0.05:
+                kind = "outro"
+                function = "resolve and decay"
+                sound = "closing instrumental or vocal tail"
+            elif end - start < 2.0:
+                kind = "transition"
+                function = "breathe and bridge phrases"
+                sound = "short musical fill or breath"
+            elif normalized >= 0.7:
+                function = "build or create impact"
+                sound = "high-energy instrumental passage"
+            else:
+                function = "breathe and develop recurring motif"
+                sound = "instrumental passage"
+            timeline.append(
+                {
+                    "index": len(timeline),
+                    "name": kind,
+                    "type": kind,
+                    "start": float(start),
+                    "end": float(end),
+                    "duration": float(end - start),
+                    "text_canonical": text,
+                    "sound": sound,
+                    "function": function,
+                    "energy": normalized,
+                }
+            )
+
+        for cue in cues:
+            start = cue["start"]
+            end = cue["end"]
+            if start > cursor + 0.01:
+                add_interval(cursor, start, "instrumental")
+            if start < cursor and timeline and timeline[-1]["type"] == "lyric":
+                # Preserve overlapping vocals in one explicit overlap interval.
+                overlap_start = start
+                overlap_end = min(end, timeline[-1]["end"])
+                if overlap_end > overlap_start:
+                    timeline[-1]["type"] = "overlap"
+                    timeline[-1]["name"] = "overlap"
+                    timeline[-1]["text_canonical"] = (
+                        f"{timeline[-1]['text_canonical']} / {cue['text']}"
+                    )
+                if end > cursor:
+                    add_interval(cursor, end, "lyric", cue["text"])
+            else:
+                add_interval(max(cursor, start), end, "lyric", cue["text"])
+            cursor = max(cursor, end)
+        if cursor < duration:
+            add_interval(cursor, duration, "instrumental")
+        if not timeline and duration > 0:
+            add_interval(0.0, duration, "instrumental")
+
+        # Keep indexes stable after overlap handling.
+        for i, item in enumerate(timeline):
+            item["index"] = i
+        return timeline

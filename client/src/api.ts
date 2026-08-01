@@ -25,7 +25,8 @@ async function parseJson(res: Response): Promise<any> {
 class VidMuseAPI {
   private ws: WebSocket | null = null;
   private sessionId: string | null = null;
-  private onProgress: ((data: any) => void) | null = null;
+  private progressListeners = new Set<(data: any) => void>();
+  private storyboardFrameListeners = new Set<(data: any) => void>();
 
   async createSession(): Promise<string> {
     const res = await fetch(`${SERVER_URL}/api/session/create`, { method: "POST" });
@@ -39,14 +40,23 @@ class VidMuseAPI {
     this.ws = new WebSocket(`${SERVER_URL.replace("http", "ws")}/api/ws/${sessionId}`);
     this.ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      if (data.type === "progress" && this.onProgress) {
-        this.onProgress(data);
+      if (data.type === "progress") {
+        this.progressListeners.forEach((cb) => cb(data));
+      }
+      if (data.type === "storyboard_frame") {
+        this.storyboardFrameListeners.forEach((cb) => cb(data));
       }
     };
   }
 
   onProgressUpdate(callback: (data: any) => void) {
-    this.onProgress = callback;
+    this.progressListeners.add(callback);
+    return () => this.progressListeners.delete(callback);
+  }
+
+  onStoryboardFrameUpdate(callback: (data: any) => void) {
+    this.storyboardFrameListeners.add(callback);
+    return () => this.storyboardFrameListeners.delete(callback);
   }
 
   async uploadAudio(file: File): Promise<any> {
@@ -64,6 +74,25 @@ class VidMuseAPI {
     form.append("session_id", this.sessionId);
     files.forEach((f) => form.append("files", f));
     const res = await fetch(`${SERVER_URL}/api/upload/images`, { method: "POST", body: form });
+    return parseJson(res);
+  }
+
+  async configureSession(payload: {
+    singer_profile?: Record<string, string>;
+    video_backend?: string;
+    lyrics?: string;
+    creative_direction?: string;
+    performance_mix?: string;
+    project_mode?: "mtv" | "typography";
+    comfy_backend?: "cloud" | "local" | "ai-playground";
+    comfy_url?: string;
+  }): Promise<any> {
+    if (!this.sessionId) throw new Error("No session");
+    const res = await fetch(`${SERVER_URL}/api/session/config`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: this.sessionId, ...payload }),
+    });
     return parseJson(res);
   }
 
@@ -107,9 +136,45 @@ class VidMuseAPI {
     return parseJson(res);
   }
 
-  async generateStoryboardImages(): Promise<any> {
+  async generateStoryboardImages(options?: {
+    startIndex?: number;
+    endIndex?: number;
+  }): Promise<any> {
     if (!this.sessionId) throw new Error("No session");
+    const body: Record<string, unknown> = { session_id: this.sessionId };
+    if (options?.startIndex != null) body.start_index = options.startIndex;
+    if (options?.endIndex != null) body.end_index = options.endIndex;
     const res = await fetch(`${SERVER_URL}/api/storyboard/generate-images`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return parseJson(res);
+  }
+
+  async renderStoryboardRange(
+    startIndex: number,
+    endIndex?: number,
+    frameIndices?: number[]
+  ): Promise<any> {
+    if (!this.sessionId) throw new Error("No session");
+    const body: Record<string, unknown> = {
+      session_id: this.sessionId,
+      start_index: startIndex,
+    };
+    if (endIndex != null) body.end_index = endIndex;
+    if (frameIndices?.length) body.frame_indices = frameIndices;
+    const res = await fetch(`${SERVER_URL}/api/storyboard/render-range`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return parseJson(res);
+  }
+
+  async cancelStoryboardRender(): Promise<any> {
+    if (!this.sessionId) throw new Error("No session");
+    const res = await fetch(`${SERVER_URL}/api/storyboard/cancel-render`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: this.sessionId }),

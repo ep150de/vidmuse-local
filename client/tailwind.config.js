@@ -21,8 +21,8 @@ export default {
         },
       },
       fontFamily: {
-        display: ['"Orbitron"', '"Space Grotesk"', "sans-serif"],
-        sans: ['"Space Grotesk"', "system-ui", "sans-serif"],
+        display: ['"Sora"', '"Plus Jakarta Sans"', "sans-serif"],
+        sans: ['"Plus Jakarta Sans"', "system-ui", "sans-serif"],
       },
     },
   },

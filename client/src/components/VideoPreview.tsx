@@ -60,7 +60,7 @@ export function VideoPreview({ onComplete, onError }: Props) {
         <div className="animate-spin w-16 h-16 border-2 border-cyan-400 border-t-transparent rounded-full mx-auto mb-6" />
         <h2 className="font-display text-2xl mb-2">Animating Full Song</h2>
         <p className="text-sm text-[var(--muted)]">
-          Running LTX-2.3 image+audio motion for each scene (HuMo fallback if needed).
+          Running your selected model (InfiniteTalk face performance, LTX-2.3, or HuMo).
           The editor then loops/fills clips to cover the entire track.
         </p>
       </div>
