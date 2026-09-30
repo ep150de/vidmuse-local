@@ -1,0 +1,22 @@
+{
+  "song": "On-Chain OG.mp3",
+  "duration": 148.440,
+  "concept": "West Coast classic hip-hop MTV music video. A crew of performers c-walking and dancing to the beat in the streets of LA (no reference singer — generic West Coast crew). Scenes themed by the lyrics: chrome/lowriders, cornerstones, swap meets, dub plates, concrete West Side legends. Fixed gritty sundown LA look, neon-decay palette, no on-screen text (visuals carry the lyric meaning).",
+  "scenes": [
+    {"scene": 0,  "start": 0.0,   "end": 10.0,  "type": "PERF", "lyric": "Low rider chrome, black on mute, whole new set", "note": "crew intro pose, lowrider chrome gleam, c-walk begins"},
+    {"scene": 1,  "start": 10.0,  "end": 20.0,  "type": "THEME", "lyric": "cornerstone freezer, day ones posted", "note": "LA corner store / street corner, crew posted"},
+    {"scene": 2,  "start": 20.0,  "end": 30.0,  "type": "PERF", "lyric": "etched new codes in a real slate, graffiti on the beam", "note": "crew c-walking by graffiti wall, spray-can glow"},
+    {"scene": 3,  "start": 30.0,  "end": 40.0,  "type": "THEME", "lyric": "brand chain, swap meets, phrase sheets from house parties", "note": "swap-meet / house-party street montage"},
+    {"scene": 4,  "start": 40.0,  "end": 50.0,  "type": "PERF", "lyric": "home chain hojo, write the code in the concrete west side legends", "note": "crew cipher in the street, c-walk spotlight"},
+    {"scene": 5,  "start": 50.0,  "end": 60.0,  "type": "THEME", "lyric": "ride in the pool while the sea, names you never gon' tweet", "note": "West Side rooftop / poolside LA dusk"},
+    {"scene": 6,  "start": 60.0,  "end": 70.0,  "type": "PERF", "lyric": "old tape decks, box full of dub plates, milk crates", "note": "crew by boombox/dub plates, c-walk old-school"},
+    {"scene": 7,  "start": 70.0,  "end": 80.0,  "type": "THEME", "lyric": "every little loop, tape stamped in the slate", "note": "record-shop / tape-trading LA alley"},
+    {"scene": 8,  "start": 80.0,  "end": 90.0,  "type": "PERF", "lyric": "low pro cap with the brim, whole chain", "note": "crew close-up, caps low, c-walk sync"},
+    {"scene": 9,  "start": 90.0,  "end": 100.0, "type": "THEME", "lyric": "swap chain spots, heads and the drive, don't bend", "note": "driving-through-LA / highway West Side cruise"},
+    {"scene": 10, "start": 100.0, "end": 110.0, "type": "PERF", "lyric": "home chain hojo, write the code in the concrete", "note": "crew chorus cipher, big c-walk formation"},
+    {"scene": 11, "start": 110.0, "end": 120.0, "type": "THEME", "lyric": "ground names you never gon' tweet, scroll through the chain", "note": "mural wall / scroll-of-names street art"},
+    {"scene": 12, "start": 120.0, "end": 130.0, "type": "PERF", "lyric": "hojo living in the small trails, back yard show", "note": "backyard party, crew dancing"},
+    {"scene": 13, "start": 130.0, "end": 140.0, "type": "THEME", "lyric": "cops fail, right back on the set stack", "note": "LA street at night, neon, crew dispersing/regrouping"},
+    {"scene": 14, "start": 140.0, "end": 148.4, "type": "OUTRO", "lyric": "home chain hojo hojo hojo", "note": "crew final pose, sundown LA skyline, no text"}
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "song": "Gifted Prophet on the Chain.mp3",
+  "duration": 193.920,
+  "character": "DJ Gifted Prophet — a young man with olive skin, Ray-Ban nerdy glasses, a goatee, wearing a black baseball cap with white letters 'LL' on the front. He is the DJ/performer and the 'prophet on the chain'.",
+  "concept": "Derived purely from the lyrics. DJ Gifted Prophet moves through LA while the 'chain' (on-chain ledger) is visualized as something physical he engraves, carries, and verifies — park bench scripts, hash codes in a dark trench, a West side slow ride, digital caves glowing, names etched in steel, scripture palm trees. The through-line: 'check the chain, see what's real'. West Coast neon-decay palette, 90s MTV grain. SMALL percentage of scenes are slow-mo (scenes 2 and 9) per prior feedback. No on-screen text.",
+  "scenes": [
+    {"scene": 0,  "start": 0.0,   "end": 10.0,  "type": "PERF",  "slowmo": false, "lyric": "get the profit, talk to em", "note": "DJ at the decks, head nodding to the beat, confident intro"},
+    {"scene": 1,  "start": 10.0,  "end": 20.0,  "type": "THEME", "slowmo": false, "lyric": "low brand, sun drip, flip a script on the park bench", "note": "park bench in West Coast daylight, character writing/reflecting"},
+    {"scene": 2,  "start": 20.0,  "end": 30.0,  "type": "PERF",  "slowmo": true,  "lyric": "talk to em, talk to em, fat stack", "note": "SLOW-MO: character dancing to the beat, hands moving slow, beat-synced"},
+    {"scene": 3,  "start": 30.0,  "end": 40.0,  "type": "THEME", "slowmo": false, "lyric": "hash codes in the dark trench", "note": "street at night, neon, character in a long coat, code glowing"},
+    {"scene": 4,  "start": 40.0,  "end": 50.0,  "type": "THEME", "slowmo": false, "lyric": "west side slow ride, wave from the back of the drain", "note": "lowrider cruise, West side, palm-lined street"},
+    {"scene": 5,  "start": 50.0,  "end": 60.0,  "type": "PERF",  "slowmo": false, "lyric": "he don't rush, he engraves", "note": "character engraving a stone/metal ledger, focused hands"},
+    {"scene": 6,  "start": 60.0,  "end": 70.0,  "type": "THEME", "slowmo": false, "lyric": "late night, one screen glow, digital caves", "note": "dim room, single screen glow on his face, digital cave"},
+    {"scene": 7,  "start": 70.0,  "end": 80.0,  "type": "PERF",  "slowmo": false, "lyric": "on the ground, no parade, quiet when he come through", "note": "character walking street stealth, calm confidence"},
+    {"scene": 8,  "start": 80.0,  "end": 90.0,  "type": "THEME", "slowmo": false, "lyric": "on the chain, every number got a name", "note": "chain visualization: glowing ledger lines, names"},
+    {"scene": 9,  "start": 90.0,  "end": 100.0, "type": "PERF",  "slowmo": true,  "lyric": "West Coast breeze, in your brain", "note": "SLOW-MO: character dancing under palm trees, breeze, slow"},
+    {"scene": 10, "start": 100.0, "end": 110.0, "type": "THEME", "slowmo": false, "lyric": "old soul in the new cold, seat back, sneakers on wire", "note": "lowrider seat back, palm trees, relaxed"},
+    {"scene": 11, "start": 110.0, "end": 120.0, "type": "PERF",  "slowmo": false, "lyric": "it's bits, not bricks", "note": "character at screen, hands on keyboard, digital"},
+    {"scene": 12, "start": 120.0, "end": 130.0, "type": "THEME", "slowmo": false, "lyric": "cycle hit 10, years the mark never go bad", "note": "engraved wall with marks/dates, West Coast mural"},
+    {"scene": 13, "start": 130.0, "end": 140.0, "type": "THEME", "slowmo": false, "lyric": "scripture palm trees, mark harder than steel", "note": "palm trees at golden hour, steel plaque, real vs fake"},
+    {"scene": 14, "start": 140.0, "end": 150.0, "type": "PERF",  "slowmo": false, "lyric": "when the world feel fake, the ground might break", "note": "character intense pose, cracks/ground motif"},
+    {"scene": 15, "start": 150.0, "end": 160.0, "type": "THEME", "slowmo": false, "lyric": "check the chain, see what's real", "note": "glowing chain/ledger reveal, verification"},
+    {"scene": 16, "start": 160.0, "end": 170.0, "type": "PERF",  "slowmo": false, "lyric": "give the profit on the chain", "note": "DJ triumph, hands up at decks"},
+    {"scene": 17, "start": 170.0, "end": 180.0, "type": "THEME", "slowmo": false, "lyric": "West side scripture laid back", "note": "palm trees, west coast sunset cruise"},
+    {"scene": 18, "start": 180.0, "end": 190.0, "type": "PERF",  "slowmo": false, "lyric": "the mark stayed harder than steel", "note": "character walking LA streets, confident, cap 'LL'"},
+    {"scene": 19, "start": 190.0, "end": 193.9, "type": "OUTRO", "slowmo": false, "lyric": "one time you can see what's real", "note": "final pose at decks, fade, no text"}
+  ]
+}

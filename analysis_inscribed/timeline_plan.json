@@ -1,0 +1,27 @@
+{
+  "song": "Inscribed in the Block.mp3",
+  "duration": 161.24,
+  "single_performer": true,
+  "characters": {
+    "prophet": "DJ Gifted Prophet — a young Caucasian man with Ray-Ban nerdy glasses, a black baseball cap with white letters 'LL' on the front, wearing a light blue Lacoste polo and black pants with Nike Air Max shoes, dressed as a modern hip hop DJ. (No female vocalist on this track.)"
+  },
+  "concept": "Derived purely from the lyrics. DJ Gifted Prophet is the 'day one' — from a basement tape-and-crate setup to the on-chain ledger. The 'block' = both a city block (graffiti wall / tag / flame) and the blockchain: his name gets 'inscribed in the block', 'little numbers by my name', 'scroll through the chains see the tag and the flame', 'who's that? in the blocks in my name'. Themes: basement->browsers, corners->coinbase, rug pulls shrugged off, 'don't cheat don't black don't change', staying on the chain as OG. West Coast / modern hip hop DJ palette, neon-decay + club basement + graffiti wall. SMALL % slow-mo (scenes 5 and 11). No on-screen text. Single performer only (no female vocalist this track).",
+  "scenes": [
+    {"scene": 0,  "start": 0.0,   "end": 10.0,  "role": "DJ",    "slowmo": false, "lyric": "I'm that day one, tape pop basement and crates", "note": "DJ at basement decks, confident intro"},
+    {"scene": 1,  "start": 10.0,  "end": 20.0,  "role": "THEME", "slowmo": false, "lyric": "tape pop basement and crates", "note": "record crates + cassette tapes, basement"},
+    {"scene": 2,  "start": 20.0,  "end": 30.0,  "role": "DJ",    "slowmo": false, "lyric": "turn my crap in the hashes", "note": "DJ hands on mixer, beat energy"},
+    {"scene": 3,  "start": 30.0,  "end": 40.0,  "role": "THEME", "slowmo": false, "lyric": "turn my crap in the hashes, now it's", "note": "glowing hash/ledger abstract, no text"},
+    {"scene": 4,  "start": 40.0,  "end": 50.0,  "role": "DJ",    "slowmo": false, "lyric": "I'm that day one (basement)", "note": "DJ performing in basement, energy"},
+    {"scene": 5,  "start": 50.0,  "end": 60.0,  "role": "DJ",    "slowmo": true,  "lyric": "basement and crates", "note": "SLOW-MO: DJ dancing to the beat in basement"},
+    {"scene": 6,  "start": 60.0,  "end": 70.0,  "role": "THEME", "slowmo": false, "lyric": "now it's", "note": "crates -> street transition, LA night"},
+    {"scene": 7,  "start": 70.0,  "end": 80.0,  "role": "DJ",    "slowmo": false, "lyric": "spray on that chain, little numbers by my name", "note": "DJ spray-painting a wall with chain/name motif"},
+    {"scene": 8,  "start": 80.0,  "end": 90.0,  "role": "DJ",    "slowmo": false, "lyric": "Coal it in the safe, rug pull shrugged in a smile", "note": "DJ calm by a vault/safe, unfazed"},
+    {"scene": 9,  "start": 90.0,  "end": 100.0, "role": "DJ",    "slowmo": false, "lyric": "OG block chain, all this inscribed in the block, I'm lawless", "note": "DJ triumphant at the inscribed wall (hook)"},
+    {"scene": 10, "start": 100.0, "end": 110.0, "role": "THEME", "slowmo": false, "lyric": "from the yard to the no, they come fork they come fade, still on that chain", "note": "ledger wall, fork/fade motif"},
+    {"scene": 11, "start": 110.0, "end": 120.0, "role": "DJ",    "slowmo": true,  "lyric": "inscribed in the block", "note": "SLOW-MO: DJ dancing/celebrating at the mural"},
+    {"scene": 12, "start": 120.0, "end": 130.0, "role": "THEME", "slowmo": false, "lyric": "scroll through the chains, see the tag and the flame, who's that", "note": "graffiti wall, tag + flame, identity"},
+    {"scene": 13, "start": 130.0, "end": 140.0, "role": "DJ",    "slowmo": false, "lyric": "still on that chain, OG OG", "note": "DJ performing, hook reprise"},
+    {"scene": 14, "start": 140.0, "end": 150.0, "role": "THEME", "slowmo": false, "lyric": "been on that train, don't cheat don't black don't change", "note": "name inscribed on block, integrity"},
+    {"scene": 15, "start": 150.0, "end": 161.3, "role": "DJ",    "slowmo": false, "lyric": "I'm fine, I'm fine", "note": "DJ final pose, fade, no text"}
+  ]
+}

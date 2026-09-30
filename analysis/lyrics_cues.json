@@ -1,0 +1,466 @@
+[
+  {
+    "text": "DJ Gifted Prophet in the cut",
+    "start": 0.0,
+    "end": 2.8641983303782506,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 1
+  },
+  {
+    "text": "North by Northwest, got the map tucked up",
+    "start": 2.8641983303782506,
+    "end": 6.683129437549251,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 2
+  },
+  {
+    "text": "Where the dreams go, I seen it in the dust",
+    "start": 6.683129437549251,
+    "end": 11.456793321513,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 3
+  },
+  {
+    "text": "From a late-night sketch to a launchpad trust",
+    "start": 11.456793321513,
+    "end": 15.753090817080377,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 4
+  },
+  {
+    "text": "Moon in my lens, I don't blink, I aim",
+    "start": 15.753090817080377,
+    "end": 20.526754701044126,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 5
+  },
+  {
+    "text": "Paper to the stars, I'm a different flame",
+    "start": 20.526754701044126,
+    "end": 24.823052196611503,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 6
+  },
+  {
+    "text": "Dream to reality, I move that way",
+    "start": 24.823052196611503,
+    "end": 28.164616915386127,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 7
+  },
+  {
+    "text": "One small spark, then the whole sky change",
+    "start": 28.164616915386127,
+    "end": 31.983548022557127,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 8
+  },
+  {
+    "text": "I'm talkin' lunar agency, boots on the plan",
+    "start": 31.983548022557127,
+    "end": 36.2798455181245,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 9
+  },
+  {
+    "text": "Turn rock to reward with a patient hand",
+    "start": 36.2798455181245,
+    "end": 40.09877662529551,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 10
+  },
+  {
+    "text": "In-space resource, let the future stand",
+    "start": 40.09877662529551,
+    "end": 43.440341344070134,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 11
+  },
+  {
+    "text": "Build a new lane with the whole world fam",
+    "start": 43.440341344070134,
+    "end": 47.73663883963751,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 12
+  },
+  {
+    "text": "If the deal hit right, we can level this fast",
+    "start": 47.73663883963751,
+    "end": 52.51030272360126,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 13
+  },
+  {
+    "text": "All the startups linked, all the agencies hashed",
+    "start": 52.51030272360126,
+    "end": 56.32923383077226,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 14
+  },
+  {
+    "text": "One table, one vow, let the old fear pass",
+    "start": 56.32923383077226,
+    "end": 60.62553132633963,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 15
+  },
+  {
+    "text": "We can build something true that was made to last",
+    "start": 60.62553132633963,
+    "end": 65.39919521030339,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 16
+  },
+  {
+    "text": "North by Northwest, where the dreams go",
+    "start": 65.39919521030339,
+    "end": 68.74075992907801,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 17
+  },
+  {
+    "text": "Dream to reality, let it breathe slow",
+    "start": 68.74075992907801,
+    "end": 72.08232464785263,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 18
+  },
+  {
+    "text": "North by Northwest, where the dreams go",
+    "start": 72.08232464785263,
+    "end": 75.42388936662725,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 19
+  },
+  {
+    "text": "Lock the deal in, watch the whole world glow",
+    "start": 75.42388936662725,
+    "end": 79.72018686219462,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 20
+  },
+  {
+    "text": "(North by Northwest) / (Dream to reality)",
+    "start": 79.72018686219462,
+    "end": 81.91045617366035,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 22
+  },
+  {
+    "text": "(Dream to reality)",
+    "start": 81.91045617366035,
+    "end": 83.34255533884948,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 22
+  },
+  {
+    "text": "I'm seeing consortia in the same hard room",
+    "start": 83.34255533884948,
+    "end": 87.63885283441685,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 23
+  },
+  {
+    "text": "Every builder on deck with a shared-out moon",
+    "start": 87.63885283441685,
+    "end": 91.93515032998422,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 24
+  },
+  {
+    "text": "No empty talk, just a signed-up truce",
+    "start": 91.93515032998422,
+    "end": 95.75408143715522,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 25
+  },
+  {
+    "text": "Tech so advanced make the future move",
+    "start": 95.75408143715522,
+    "end": 99.09564615592984,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 26
+  },
+  {
+    "text": "From the basalt dust to the resource vein",
+    "start": 99.09564615592984,
+    "end": 102.91457726310084,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 27
+  },
+  {
+    "text": "Fuel from the void, let it change the game",
+    "start": 102.91457726310084,
+    "end": 107.21087475866821,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 28
+  },
+  {
+    "text": "Less fight, more light, let the peace get named",
+    "start": 107.21087475866821,
+    "end": 111.50717225423558,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 29
+  },
+  {
+    "text": "Human space age, that's the frame I claim",
+    "start": 111.50717225423558,
+    "end": 115.80346974980296,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 30
+  },
+  {
+    "text": "DJ Gifted Prophet, I don't chase applause",
+    "start": 115.80346974980296,
+    "end": 119.62240085697395,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 31
+  },
+  {
+    "text": "I chase that moment when the whole world walks",
+    "start": 119.62240085697395,
+    "end": 123.91869835254133,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 32
+  },
+  {
+    "text": "Side by side, no border talk",
+    "start": 123.91869835254133,
+    "end": 126.78289668291957,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 33
+  },
+  {
+    "text": "Just a common sky and a stronger cause",
+    "start": 126.78289668291957,
+    "end": 130.60182779009057,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 34
+  },
+  {
+    "text": "If the deal hit right, we can level this fast",
+    "start": 130.60182779009057,
+    "end": 135.37549167405433,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 35
+  },
+  {
+    "text": "All the startups linked, all the agencies hashed",
+    "start": 135.37549167405433,
+    "end": 139.19442278122534,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 36
+  },
+  {
+    "text": "One table, one vow, let the old fear pass",
+    "start": 139.19442278122534,
+    "end": 143.49072027679273,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 37
+  },
+  {
+    "text": "We can build something true that was made to last",
+    "start": 143.49072027679273,
+    "end": 148.2643841607565,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 38
+  },
+  {
+    "text": "North by Northwest, where the dreams go",
+    "start": 148.2643841607565,
+    "end": 151.60594887953113,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 39
+  },
+  {
+    "text": "Dream to reality, let it breathe slow",
+    "start": 151.60594887953113,
+    "end": 154.94751359830576,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 40
+  },
+  {
+    "text": "North by Northwest, where the dreams go",
+    "start": 154.94751359830576,
+    "end": 158.2890783170804,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 41
+  },
+  {
+    "text": "Lock the deal in, watch the whole world glow",
+    "start": 158.2890783170804,
+    "end": 162.58537581264778,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 42
+  },
+  {
+    "text": "(North by Northwest) / (Dream to reality)",
+    "start": 162.58537581264778,
+    "end": 164.7756451241135,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 44
+  },
+  {
+    "text": "(Dream to reality) / From a spark to a system",
+    "start": 164.7756451241135,
+    "end": 168.0610490913121,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 45
+  },
+  {
+    "text": "From a spark to a system / From a wish to a mission",
+    "start": 168.0610490913121,
+    "end": 172.44158771424355,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 46
+  },
+  {
+    "text": "From a wish to a mission / From the lone night vision",
+    "start": 172.44158771424355,
+    "end": 176.45708145193072,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 47
+  },
+  {
+    "text": "From the lone night vision / To a world in position",
+    "start": 176.45708145193072,
+    "end": 180.1075303043736,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 48
+  },
+  {
+    "text": "To a world in position / Let the old walls fade",
+    "start": 180.1075303043736,
+    "end": 183.75797915681648,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 49
+  },
+  {
+    "text": "Let the old walls fade / Let the new bonds stay",
+    "start": 183.75797915681648,
+    "end": 187.40842800925935,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 50
+  },
+  {
+    "text": "Let the new bonds stay / If we move this way",
+    "start": 187.40842800925935,
+    "end": 191.05887686170223,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 51
+  },
+  {
+    "text": "If we move this way / Peace can learn to play",
+    "start": 191.05887686170223,
+    "end": 194.7093257141451,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 52
+  },
+  {
+    "text": "Peace can learn to play",
+    "start": 194.7093257141451,
+    "end": 197.096157656127,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 52
+  },
+  {
+    "text": "North by Northwest, where the dreams go",
+    "start": 197.096157656127,
+    "end": 200.43772237490163,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 53
+  },
+  {
+    "text": "Dream to reality, let it breathe slow",
+    "start": 200.43772237490163,
+    "end": 203.77928709367626,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 54
+  },
+  {
+    "text": "North by Northwest, where the dreams go",
+    "start": 203.77928709367626,
+    "end": 207.1208518124509,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 55
+  },
+  {
+    "text": "Lock the deal in, watch the whole world glow",
+    "start": 207.1208518124509,
+    "end": 211.41714930801828,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 56
+  },
+  {
+    "text": "(North by Northwest)",
+    "start": 211.41714930801828,
+    "end": 212.8492484732074,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 57
+  },
+  {
+    "text": "(Dream to reality)",
+    "start": 212.8492484732074,
+    "end": 237.55997916666666,
+    "source": "lyrics-token-weight",
+    "confidence": 0.3,
+    "lyric_index": 58
+  }
+]

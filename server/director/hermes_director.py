@@ -7,7 +7,7 @@ The director drives the full pipeline:
 4. Generate storyboard prompts via LLM
 5. Generate storyboard images via ComfyUI
 6. Generate video motion prompts via LLM
-7. Generate video clips via ComfyUI LTX-2.3 (image+audio) or HuMo
+7. Generate video clips via ComfyUI MiniMax H3 / InfiniteTalk / LTX-2.3 IA2V / HuMo
 8. Assemble final MP4 synced to music beats via FFmpeg
 
 User input required:
@@ -80,7 +80,7 @@ class HermesDirector:
         self.character_lock: str = ""
         self.singer_profile: Dict[str, Any] = {}
         self.video_backend: str = (
-            os.getenv("COMFY_VIDEO_BACKEND") or "infinitetalk"
+            os.getenv("COMFY_VIDEO_BACKEND") or "minimax-h3"
         ).strip().lower()
         self._video_seed_base: Optional[int] = None
         self.final_video_path: Optional[str] = None
@@ -303,7 +303,18 @@ class HermesDirector:
         else:
             mode_hint = (
                 "Favor intimate face/head performance framing with the same singer in every concept."
-                if video_mode in ("infinitetalk", "infinite-talk", "wan-infinitetalk", "talk", "humo")
+                if video_mode
+                in (
+                    "infinitetalk",
+                    "infinite-talk",
+                    "wan-infinitetalk",
+                    "talk",
+                    "humo",
+                    "minimax-h3",
+                    "minimax_h3",
+                    "h3",
+                    "minimax",
+                )
                 else "Favor cinematic music-video framing while keeping the same singer identity."
             )
 
@@ -1309,25 +1320,61 @@ Respond with ONLY this JSON:
         audio_src: str | Path,
         session_dir: Path,
         seed: int,
+        backend: Optional[str] = None,
     ) -> Optional[str]:
-        """Generate audio-aligned InfiniteTalk covering the full scene duration."""
+        """Generate audio-aligned avatar takes covering the full scene duration.
+
+        Backends: MiniMax H3 (longer takes), InfiniteTalk (chunked), or HuMo.
+        """
         scene_dur = float(frame.get("duration") or 6.0)
         start_t = float(frame.get("timestamp") or 0.0)
-        chunk_secs = float(os.getenv("COMFY_INFINITETALK_CLIP_SECONDS", "3.5"))
-        chunk_secs = min(max(2.0, chunk_secs), 5.0)
-        fps = float(os.getenv("COMFY_INFINITETALK_FPS", "25"))
+        avatar_backend = (
+            backend
+            or self.video_backend
+            or os.getenv("COMFY_VIDEO_BACKEND")
+            or "minimax-h3"
+        ).strip().lower()
+        if avatar_backend in ("minimax-h3", "minimax_h3", "h3", "minimax"):
+            avatar_backend = "minimax-h3"
+            chunk_secs = float(os.getenv("COMFY_H3_CLIP_SECONDS", "5.0"))
+            chunk_secs = min(max(3.0, chunk_secs), 12.0)
+            fps = float(os.getenv("COMFY_H3_FPS", "24"))
+            max_chunks = int(os.getenv("COMFY_H3_MAX_CHUNKS", "3"))
+            sample_rate, channels, normalize = "44100", "2", False
+            width, height = 768, 448
+            label = "MiniMax H3"
+        elif avatar_backend in ("humo", "wan", "wan-humo"):
+            avatar_backend = "humo"
+            chunk_secs = float(os.getenv("COMFY_HUMO_CLIP_SECONDS", "2.0"))
+            chunk_secs = min(max(1.5, chunk_secs), 4.0)
+            fps = float(os.getenv("COMFY_HUMO_FPS", "25"))
+            max_chunks = int(os.getenv("COMFY_HUMO_MAX_CHUNKS", "4"))
+            sample_rate, channels, normalize = "16000", "1", True
+            width, height = 512, 512
+            label = "HuMo"
+        else:
+            avatar_backend = "infinitetalk"
+            chunk_secs = float(os.getenv("COMFY_INFINITETALK_CLIP_SECONDS", "3.5"))
+            chunk_secs = min(max(2.0, chunk_secs), 5.0)
+            fps = float(os.getenv("COMFY_INFINITETALK_FPS", "25"))
+            max_chunks = int(os.getenv("COMFY_INFINITETALK_MAX_CHUNKS", "4"))
+            sample_rate, channels, normalize = "16000", "1", True
+            width, height = 480, 832
+            label = "InfiniteTalk"
+
         framing = (self.singer_profile or {}).get("framing") or "close-up on face and head"
-        width, height = 480, 832
-        if "full body" in framing.lower() or "waist" in framing.lower():
-            width, height = 832, 480
+        if avatar_backend != "humo" and (
+            "full body" in framing.lower() or "waist" in framing.lower()
+        ):
+            width, height = height, width  # landscape for wider framing
+            if avatar_backend == "minimax-h3":
+                width, height = 768, 448
 
         start_image = self._avatar_start_image(frame)
         if not start_image or not Path(start_image).is_file():
             return None
 
         n_chunks = max(1, int((scene_dur + chunk_secs - 0.05) // chunk_secs))
-        # Cap chunks per scene to control Cloud cost
-        max_chunks = int(os.getenv("COMFY_INFINITETALK_MAX_CHUNKS", "4"))
         n_chunks = min(n_chunks, max_chunks)
 
         chunk_paths: List[Path] = []
@@ -1341,11 +1388,14 @@ Respond with ONLY this JSON:
             if c == n_chunks - 1:
                 gen_secs = max(1.5, scene_dur - c * chunk_secs)
             remaining = max(0.0, scene_dur - (c + 1) * chunk_secs)
+            # H3 soft-cap ~15s per take
+            if avatar_backend == "minimax-h3":
+                gen_secs = min(gen_secs, 14.5)
 
             self._emit_progress(
                 self.PHASE_VIDEO,
                 min(95, 15 + frame_index * 3 + c),
-                f"Animating lip-sync take {frame_index + 1} chunk {c + 1}/{n_chunks}…",
+                f"Animating {label} take {frame_index + 1} chunk {c + 1}/{n_chunks}…",
             )
 
             audio_slice = session_dir / f"audio_{frame_index:02d}_{c:02d}.wav"
@@ -1355,16 +1405,19 @@ Respond with ONLY this JSON:
                     audio_slice,
                     chunk_start,
                     gen_secs,
-                    sample_rate="16000",
-                    channels="1",
-                    normalize=True,
+                    sample_rate=sample_rate,
+                    channels=channels,
+                    normalize=normalize,
                 )
             except Exception as e:
                 LOG.warning("Avatar audio slice failed: %s", e)
                 audio_slice = Path(audio_src)
 
             raw_frames = max(5, int(round(gen_secs * fps)))
-            if (raw_frames - 1) % 4 != 0:
+            if avatar_backend == "minimax-h3":
+                # length ≡ 5 (mod 17)
+                raw_frames = raw_frames + (5 - (raw_frames % 17)) % 17
+            elif (raw_frames - 1) % 4 != 0:
                 raw_frames = ((raw_frames - 1) // 4) * 4 + 1
 
             singing_prompt = (
@@ -1381,13 +1434,13 @@ Respond with ONLY this JSON:
                     duration=gen_secs,
                     width=width,
                     height=height,
-                    backend="infinitetalk",
+                    backend=avatar_backend,
                     previous_frames_path=(
                         current_start if c > 0 and current_start != start_image else None
                     ),
                 )
             except Exception as e:
-                LOG.warning("InfiniteTalk chunk %d failed: %s", c, e)
+                LOG.warning("%s chunk %d failed: %s", label, c, e)
                 video_path = None
 
             if not video_path or not Path(video_path).is_file():
@@ -1415,10 +1468,10 @@ Respond with ONLY this JSON:
         self,
         concept: Dict[str, Any],
     ) -> List[str]:
-        """Generate video clips — Avatar (InfiniteTalk) vs cinematic (LTX) by shot_type."""
+        """Generate video clips — Avatar (H3/InfiniteTalk/HuMo) vs cinematic (LTX) by shot_type."""
         await self.ensure_identity_sheet(concept)
         user_backend = (
-            self.video_backend or os.getenv("COMFY_VIDEO_BACKEND") or "infinitetalk"
+            self.video_backend or os.getenv("COMFY_VIDEO_BACKEND") or "minimax-h3"
         ).strip().lower()
         mix = (self.performance_mix or "hybrid").strip().lower()
         performance_first = mix.startswith("performance")
@@ -1447,15 +1500,19 @@ Respond with ONLY this JSON:
             shot_type = (frame.get("shot_type") or "cinematic").strip().lower()
             if performance_first and self.project_mode != "typography":
                 shot_type = "avatar"
-            # If user forced humo backend globally, still use avatar path for singing
+            # Avatar path for singing unless user forced pure LTX cinematic
             use_avatar = (
                 self.project_mode != "typography"
                 and shot_type == "avatar"
                 and user_backend != "ltx23"
             )
-            # Hybrid cinematic → LTX; if global backend is humo, use humo for cinematic too
             if use_avatar:
-                label = "InfiniteTalk"
+                if user_backend in ("minimax-h3", "minimax_h3", "h3", "minimax"):
+                    label = "MiniMax H3"
+                elif user_backend in ("humo", "wan", "wan-humo"):
+                    label = "HuMo"
+                else:
+                    label = "InfiniteTalk"
             elif user_backend in ("humo", "wan", "wan-humo"):
                 label = "HuMo"
             else:
@@ -1508,6 +1565,11 @@ Respond with ONLY this JSON:
             fill_mode = "freeze" if use_avatar else "loop"
 
             if use_avatar:
+                avatar_backend = "infinitetalk"
+                if user_backend in ("minimax-h3", "minimax_h3", "h3", "minimax"):
+                    avatar_backend = "minimax-h3"
+                elif user_backend in ("humo", "wan", "wan-humo"):
+                    avatar_backend = "humo"
                 video_path = await self._generate_avatar_scene(
                     frame=frame,
                     frame_index=i,
@@ -1515,6 +1577,7 @@ Respond with ONLY this JSON:
                     audio_src=audio_src,
                     session_dir=session_dir,
                     seed=seed,
+                    backend=avatar_backend,
                 )
             else:
                 # Single cinematic take (LTX / HuMo) — shorter clip OK with freeze/loop

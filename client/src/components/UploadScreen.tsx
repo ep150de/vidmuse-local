@@ -14,7 +14,7 @@ import {
   Server,
 } from "lucide-react";
 
-export type VideoBackend = "infinitetalk" | "ltx23" | "humo";
+export type VideoBackend = "infinitetalk" | "minimax-h3" | "ltx23" | "humo";
 export type PerformanceMix = "hybrid" | "performance";
 export type ProjectMode = "mtv" | "typography";
 export type ComfyBackend = "cloud" | "local" | "ai-playground";
@@ -67,14 +67,19 @@ const VIDEO_MODES: {
   blurb: string;
 }[] = [
   {
+    id: "minimax-h3",
+    title: "Performance · MiniMax H3",
+    blurb: "Open-weight lip sync via image+audio refs (local or cloud Comfy ≥0.30)",
+  },
+  {
     id: "infinitetalk",
     title: "Performance · InfiniteTalk",
     blurb: "Face/head singing, strong lip sync (Wan2.1)",
   },
   {
     id: "ltx23",
-    title: "Cinematic · LTX-2.3",
-    blurb: "Wider music-video motion + audio guidance",
+    title: "Cinematic · LTX-2.3 IA2V",
+    blurb: "Official-style image+audio→video; works on local distilled weights",
   },
   {
     id: "humo",
@@ -88,7 +93,7 @@ export function UploadScreen({ onComplete }: Props) {
   const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [prompt, setPrompt] = useState("");
   const [lyrics, setLyrics] = useState("");
-  const [videoBackend, setVideoBackend] = useState<VideoBackend>("infinitetalk");
+  const [videoBackend, setVideoBackend] = useState<VideoBackend>("minimax-h3");
   const [performanceMix, setPerformanceMix] = useState<PerformanceMix>("hybrid");
   const [projectMode, setProjectMode] = useState<ProjectMode>("mtv");
   const [comfyBackend, setComfyBackend] = useState<ComfyBackend>("cloud");
@@ -452,7 +457,13 @@ export function UploadScreen({ onComplete }: Props) {
                 placeholder="http://localhost:8188"
               />
               <p className="text-xs text-[var(--muted)]">
-                Start the Comfy server first. AI Playground commonly exposes the same port.
+                Start the Comfy server first (ComfyUI ≥ 0.30 for MiniMax H3). AI
+                Playground commonly exposes the same port. Install open weights into
+                your local Comfy models folders — H3 from Hugging Face{" "}
+                <span className="font-mono">Comfy-Org/MiniMax-H3</span> (ref2va +
+                VAEs + Qwen3VL), LTX distilled checkpoint + Gemma text encoder.
+                Health → <span className="font-mono">video_models</span> reports
+                which backends are ready.
               </p>
             </label>
           )}

@@ -1,0 +1,38 @@
+{
+  "source": "/home/lingleblater/ai-radio-station/music/North By Northwest.mp3",
+  "probe": {
+    "programs": [],
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "mp3",
+        "codec_type": "audio",
+        "sample_rate": "48000",
+        "channels": 2,
+        "channel_layout": "stereo"
+      },
+      {
+        "index": 1,
+        "codec_name": "mjpeg",
+        "codec_type": "video"
+      }
+    ],
+    "format": {
+      "format_name": "mp3",
+      "start_time": "0.023021",
+      "duration": "237.600000",
+      "bit_rate": "179341"
+    }
+  },
+  "silence_intervals": [
+    {
+      "start": 0.0,
+      "end": 0.592,
+      "duration": 0.592
+    }
+  ],
+  "silence_threshold": {
+    "noise": "-45dB",
+    "minimum_duration": 0.3
+  }
+}

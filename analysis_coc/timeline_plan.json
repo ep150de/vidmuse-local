@@ -1,0 +1,30 @@
+{
+  "song": "Chain on the Canvas.mp3",
+  "duration": 181.464,
+  "characters": {
+    "prophet": "DJ Gifted Prophet — a young man with LIGHT olive skin (lighter than before), Ray-Ban nerdy glasses, a goatee, wearing a black baseball cap with white letters 'LL' on the front. Male vocalist.",
+    "femcee": "The female vocalist — a young Black woman with bold curly hair, gold hoop earrings, wearing an oversized vintage graphic tee, West Coast femcee style. First consistent second member of the group."
+  },
+  "concept": "Derived purely from the lyrics. 'Chain on the Canvas' = the on-chain ledger is painted/carved onto a city canvas/mural: spray paint, code, names in the ledger, 'carving code', 'paint fades off'. West Coast neon-decay palette, 90s MTV grain. Female vocalist OPENS the song (long 0-32s intro), DJ Gifted Prophet carries the body, female reprise near the end; this plants a consistent two-person group. SMALL % slow-mo (scenes 1 and 10). No on-screen text.",
+  "scenes": [
+    {"scene": 0,  "start": 0.0,   "end": 10.0,  "role": "FEM",   "slowmo": false, "lyric": "sun scars on my thumb, Mr Presswhack, press blocks", "note": "female vocalist opens, confident at a mic / wall"},
+    {"scene": 1,  "start": 10.0,  "end": 20.0,  "role": "FEM",   "slowmo": true,  "lyric": "watch some runs", "note": "SLOW-MO: female dancing to the beat, west coast"},
+    {"scene": 2,  "start": 20.0,  "end": 30.0,  "role": "FEM",   "slowmo": false, "lyric": "same crate digger just a new crate", "note": "female at crate / digging records"},
+    {"scene": 3,  "start": 30.0,  "end": 40.0,  "role": "MALE",  "slowmo": false, "lyric": "digits in a wallet not a briefcase", "note": "DJ Gifted Prophet, lighter skin, at decks"},
+    {"scene": 4,  "start": 40.0,  "end": 50.0,  "role": "MALE",  "slowmo": false, "lyric": "tags turn X on the screen, scroll sats like a flip book", "note": "DJ + glowing screen / code"},
+    {"scene": 5,  "start": 50.0,  "end": 60.0,  "role": "MALE",  "slowmo": false, "lyric": "from basements, trees on the stone, carving code", "note": "basement + stone wall carving"},
+    {"scene": 6,  "start": 60.0,  "end": 70.0,  "role": "MALE",  "slowmo": false, "lyric": "alley late night, west side breeze", "note": "DJ walking alley, palm shadow"},
+    {"scene": 7,  "start": 70.0,  "end": 80.0,  "role": "MALE",  "slowmo": false, "lyric": "ice size dreams, I used to dub tapes", "note": "DJ with cassette / tape motif"},
+    {"scene": 8,  "start": 80.0,  "end": 90.0,  "role": "MALE",  "slowmo": false, "lyric": "dub traits, visions in the code safe gate", "note": "DJ at screen, hands on keyboard"},
+    {"scene": 9,  "start": 90.0,  "end": 100.0, "role": "MALE",  "slowmo": false, "lyric": "cop the pain cop the jokes, chasing time", "note": "DJ intense, hood snapshot vibe"},
+    {"scene": 10, "start": 100.0, "end": 110.0, "role": "MALE",  "slowmo": true,  "lyric": "grandkids rhyme when paint fades, names in ledger core", "note": "SLOW-MO: DJ dancing, canvas/ledger behind"},
+    {"scene": 11, "start": 110.0, "end": 120.0, "role": "GROUP", "slowmo": false, "lyric": "from the alley to the alley (break)", "note": "both performers, mural canvas, instrumental"},
+    {"scene": 12, "start": 120.0, "end": 130.0, "role": "FEM",   "slowmo": false, "lyric": "from the alley to the alley late night long", "note": "female reprise, singing to canvas"},
+    {"scene": 13, "start": 130.0, "end": 140.0, "role": "GROUP", "slowmo": false, "lyric": "(instrumental) painting the canvas", "note": "group spray-painting a mural"},
+    {"scene": 14, "start": 140.0, "end": 150.0, "role": "GROUP", "slowmo": false, "lyric": "names in the ledger core", "note": "close-up of names painted on wall"},
+    {"scene": 15, "start": 150.0, "end": 160.0, "role": "GROUP", "slowmo": false, "lyric": "carving code on canvas", "note": "DJ + femcee at the mural, west side"},
+    {"scene": 16, "start": 160.0, "end": 170.0, "role": "GROUP", "slowmo": false, "lyric": "we just carving code", "note": "group walking, canvas behind"},
+    {"scene": 17, "start": 170.0, "end": 180.0, "role": "GROUP", "slowmo": false, "lyric": "west side breeze", "note": "group at sunset, palm trees"},
+    {"scene": 18, "start": 180.0, "end": 181.5, "role": "GROUP", "slowmo": false, "lyric": "fade", "note": "final group pose, fade, no text"}
+  ]
+}

@@ -97,6 +97,24 @@ backend = client.backend_type  # "explicit" | "xpu" | "standard" | "default"
 
 ## New Workflows
 
+### MiniMax H3 Reference-to-Video (lip sync)
+
+Open-weight image + audio → video. Same API graph on **local ComfyUI ≥ 0.30** and Comfy Cloud.
+
+**Reference UI template:** `comfyui_workflows/minimax_h3_r2v_workflow.json`  
+**Runtime builder:** `ComfyUIClient._build_minimax_h3_r2v_workflow` / `generate_video_i2v(..., backend="minimax-h3")`
+
+**Local install (Hugging Face `Comfy-Org/MiniMax-H3`):**
+- `models/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors` (R2V — not fl2va)
+- `models/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors`
+- `models/vae/minimax_h3_video_vae_fp16.safetensors`
+- `models/vae/minimax_h3_audio_vae_fp32.safetensors`
+
+Set `COMFYUI_BACKEND=local` (or `ai-playground`) and `COMFYUI_URL=http://localhost:8188`.  
+`/api/health` → `comfyui.video_models["minimax-h3"].ready` reports whether weights are visible.
+
+Master song audio is always muxed; H3-generated stereo is discarded.
+
 ### HuMo Lip-Sync
 
 Enhanced lip-sync for music videos using the HuMo model.
@@ -121,27 +139,15 @@ result = await client.generate_humo_lipsync(
 - `FrameInterpolation` custom node
 - Audio track for lip-sync reference
 
-### LTX-2.3 I2V
+### LTX-2.3 IA2V
 
-Enhanced video generation from reference images using LTX-2.3.
+Official-style image + audio → video (single-stage local default).
 
-**Workflow file:** `comfyui_workflows/ltx23_i2v_workflow.json`
+**Reference UI template:** `comfyui_workflows/ltx23_ia2v_workflow.json`  
+**Runtime builder:** `ComfyUIClient._build_ltx23_av_i2v_workflow` / `generate_video_i2v(..., backend="ltx23")`
 
-**Usage in code:**
-```python
-result = await client.generate_ltx23_i2v(
-    image_path="/path/to/reference.jpg",
-    prompt="smooth camera movement, cinematic lighting",
-    width=768,
-    height=512,
-    num_frames=81,  # ~3.3s at 24fps
-    motion_strength=0.7,  # 0.0 to 1.0
-    camera_motion="horizontal_pan",  # pan_left, pan_right, zoom_in, zoom_out, tilt_up, tilt_down
-)
-```
-
-**Requirements:**
-- `ltx23_i2v.safetensors` checkpoint
+**Local install:** distilled checkpoint + Gemma text encoder (see `.env.example`).  
+`COMFY_LTX_AUDIO_MODE=encode` (default) matches official AudioVAEEncode; set `reference` for the older ReferenceAudio path.
 - `LTXMotionModule` custom node
 - Reference image for video generation
 

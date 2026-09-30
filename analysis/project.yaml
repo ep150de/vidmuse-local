@@ -1,0 +1,97 @@
+project:
+  title: "North By Northwest"
+  artist: "DJ GP2.0"
+  source_audio: "/home/lingleblater/vidmuse-local/North By Northwest.mp3"
+  duration_seconds: 237.6
+  aspect_ratio: "16:9"
+  resolution: "1920x1080"
+  fps: 30
+  platform: "general-master"
+  language: "en"
+  lyric_policy: "verbatim"
+  typography_mode: "adaptive"
+  retry_budget:
+    image_per_shot: 2
+    video_per_shot: 2
+
+visual_bible:
+  concept:
+    logline: "A lunar-agency origin story told through kinetic typography, paper-graphic texture, and neon-fired instrument panels."
+    emotional_arc: "blueprint -> ascent -> constellation -> world glow"
+  palette:
+    primary: ["deep space navy", "ink violet"]
+    accents: ["neon magenta", "cyan", "gold foil"]
+    forbidden: ["flat white backgrounds", "over-saturated red"]
+  materials:
+    world: ["layered paper cutouts", "topographic charts", "foil stamps", "grid overlays", "nebula gradients"]
+    text: "bold foil-stamped sans-serif with neon edge glow"
+  composition:
+    perspective: "mixed flat-design depth with occasional macro overlay"
+    safe_margin_percent: 8
+    maximum_lyric_lines: 2
+    lyric_quiet_zone: true
+  typography:
+    personality: "agile, clean, high-contrast"
+    case: "as-written"
+    hierarchy: "hook words scale up; pre-chorus contracts; chorus expands to field-fill"
+  motion:
+    baseline: "snappy cut-and-reveal with restrained parallax"
+    impact: "burst or stamp on key downbeats; glow pulse on hook repeats"
+    prohibited: ["spinning lyrics", "random morphing", "camera shake"]
+  camera:
+    movement: ["slow push-in on chorus", "lateral drift on verses", "zoom-through on transitions"]
+    prohibited: ["whip pans", "extreme lens changes"]
+  transitions:
+    family: ["grid wipe", "foil stamp", "star iris", "paper tear", "light bloom"]
+  recurring_motifs:
+    - name: "north-star compass mark"
+      progression: "small guide -> navigation fixture -> constellation node -> final seal"
+    - name: "basalt dust grain"
+      progression: "background texture -> resource vein -> bridge material -> glow source"
+
+analysis:
+  exact_duration_seconds: 237.6
+  sample_rate: 48000
+  channels: 2
+  tempo_bpm: null
+  tempo_confidence: null
+  sections: []
+  notes: ["derived from faster-whisper + librosa beat track; timeline pending transcription"]
+
+timeline:
+  - id: "shot_001"
+    start_seconds: 0.0
+    end_seconds: null
+    type: "intro"
+    voice: null
+    text_canonical: null
+    text_display: null
+    timing_source: "manual"
+    timing_confidence: null
+    musical_event: "opening"
+    energy_start: null
+    energy_peak: null
+    energy_end: null
+    visual_purpose: "establish lunar-agency world with motif and palette"
+    composition: "topographic grid fades into nebula; north-star motif appears"
+    typography_mode: "none"
+    reveal_grammar: ""
+    internal_cues: []
+    transition_in: "fade in"
+    transition_out: "grid wipe"
+    image_asset: null
+    video_asset: null
+    qc:
+      image_text_pass: null
+      sampled_video_text_pass: null
+      mobile_legibility_pass: null
+      notes: []
+
+exports:
+  master:
+    path: "output/final-master.mp4"
+    audio_source: "original"
+  alternates:
+    - platform: "tiktok"
+      path: "output/final-master-9x16.mp4"
+      audio_source: "original"

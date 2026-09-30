@@ -411,7 +411,7 @@ async def create_session():
         "storyboard": [],
         "concept_prompt": "",
         "singer_profile": {},
-        "video_backend": "infinitetalk",
+        "video_backend": "minimax-h3",
         "project_mode": "mtv",
         "performance_mix": "hybrid",
         "comfy_backend": COMFYUI_BACKEND,
@@ -438,8 +438,17 @@ async def configure_session(request: dict):
         }
     backend = str(request.get("video_backend") or session.get("video_backend") or "infinitetalk")
     backend = backend.strip().lower()
-    if backend not in ("infinitetalk", "ltx23", "humo"):
+    if backend not in (
+        "infinitetalk",
+        "ltx23",
+        "humo",
+        "minimax-h3",
+        "minimax_h3",
+        "h3",
+    ):
         backend = "infinitetalk"
+    if backend in ("minimax_h3", "h3"):
+        backend = "minimax-h3"
     session["video_backend"] = backend
 
     # Optional pasted lyrics (overrides / supplements Whisper later)

@@ -1,0 +1,1046 @@
+{
+  "duration_seconds": 237.55997916666666,
+  "timeline": [
+    {
+      "index": 0,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "DJ Gifted Prophet in the cut",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [],
+      "start_seconds": 0.0,
+      "end_seconds": 2.8641983303782506,
+      "voice": "lead",
+      "duration_seconds": 2.8641983303782506,
+      "id": "shot_001"
+    },
+    {
+      "index": 1,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "North by Northwest, got the map tucked up",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        4.448,
+        4.938666666666666
+      ],
+      "start_seconds": 2.8641983303782506,
+      "end_seconds": 6.683129437549251,
+      "voice": "lead",
+      "duration_seconds": 3.8189311071710006,
+      "id": "shot_002"
+    },
+    {
+      "index": 2,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Where the dreams go, I seen it in the dust",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        8.938666666666666,
+        9.44
+      ],
+      "start_seconds": 6.683129437549251,
+      "end_seconds": 11.456793321513,
+      "voice": "lead",
+      "duration_seconds": 4.773663883963749,
+      "id": "shot_003"
+    },
+    {
+      "index": 3,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "From a late-night sketch to a launchpad trust",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        13.450666666666667,
+        13.941333333333333
+      ],
+      "start_seconds": 11.456793321513,
+      "end_seconds": 15.753090817080377,
+      "voice": "lead",
+      "duration_seconds": 4.2962974955673765,
+      "id": "shot_004"
+    },
+    {
+      "index": 4,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Moon in my lens, I don't blink, I aim",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        17.92,
+        18.421333333333333
+      ],
+      "start_seconds": 15.753090817080377,
+      "end_seconds": 20.526754701044126,
+      "voice": "lead",
+      "duration_seconds": 4.773663883963749,
+      "id": "shot_005"
+    },
+    {
+      "index": 5,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Paper to the stars, I'm a different flame",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        22.421333333333333,
+        22.922666666666668
+      ],
+      "start_seconds": 20.526754701044126,
+      "end_seconds": 24.823052196611503,
+      "voice": "lead",
+      "duration_seconds": 4.2962974955673765,
+      "id": "shot_006"
+    },
+    {
+      "index": 6,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Dream to reality, I move that way",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        26.421333333333333,
+        26.922666666666668
+      ],
+      "start_seconds": 24.823052196611503,
+      "end_seconds": 28.164616915386127,
+      "voice": "lead",
+      "duration_seconds": 3.341564718774624,
+      "id": "shot_007"
+    },
+    {
+      "index": 7,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "One small spark, then the whole sky change",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        29.92,
+        30.421333333333333
+      ],
+      "start_seconds": 28.164616915386127,
+      "end_seconds": 31.983548022557127,
+      "voice": "lead",
+      "duration_seconds": 3.818931107171,
+      "id": "shot_008"
+    },
+    {
+      "index": 8,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "I'm talkin' lunar agency, boots on the plan",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        33.87733333333333,
+        34.410666666666664
+      ],
+      "start_seconds": 31.983548022557127,
+      "end_seconds": 36.2798455181245,
+      "voice": "lead",
+      "duration_seconds": 4.2962974955673765,
+      "id": "shot_009"
+    },
+    {
+      "index": 9,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Turn rock to reward with a patient hand",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        37.909333333333336,
+        38.410666666666664
+      ],
+      "start_seconds": 36.2798455181245,
+      "end_seconds": 40.09877662529551,
+      "voice": "lead",
+      "duration_seconds": 3.8189311071710037,
+      "id": "shot_010"
+    },
+    {
+      "index": 10,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "In-space resource, let the future stand",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        41.408,
+        41.909333333333336
+      ],
+      "start_seconds": 40.09877662529551,
+      "end_seconds": 43.440341344070134,
+      "voice": "lead",
+      "duration_seconds": 3.3415647187746274,
+      "id": "shot_011"
+    },
+    {
+      "index": 11,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Build a new lane with the whole world fam",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        45.408,
+        45.909333333333336
+      ],
+      "start_seconds": 43.440341344070134,
+      "end_seconds": 47.73663883963751,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567373,
+      "id": "shot_012"
+    },
+    {
+      "index": 12,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "If the deal hit right, we can level this fast",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        49.898666666666664,
+        50.42133333333334
+      ],
+      "start_seconds": 47.73663883963751,
+      "end_seconds": 52.51030272360126,
+      "voice": "lead",
+      "duration_seconds": 4.773663883963749,
+      "id": "shot_013"
+    },
+    {
+      "index": 13,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "All the startups linked, all the agencies hashed",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        54.410666666666664,
+        54.858666666666664
+      ],
+      "start_seconds": 52.51030272360126,
+      "end_seconds": 56.32923383077226,
+      "voice": "lead",
+      "duration_seconds": 3.8189311071710037,
+      "id": "shot_014"
+    },
+    {
+      "index": 14,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "One table, one vow, let the old fear pass",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        58.410666666666664,
+        58.88
+      ],
+      "start_seconds": 56.32923383077226,
+      "end_seconds": 60.62553132633963,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567373,
+      "id": "shot_015"
+    },
+    {
+      "index": 15,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "We can build something true that was made to last",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        62.912,
+        63.413333333333334
+      ],
+      "start_seconds": 60.62553132633963,
+      "end_seconds": 65.39919521030339,
+      "voice": "lead",
+      "duration_seconds": 4.773663883963756,
+      "id": "shot_016"
+    },
+    {
+      "index": 16,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "North by Northwest, where the dreams go",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        66.912,
+        67.40266666666666
+      ],
+      "start_seconds": 65.39919521030339,
+      "end_seconds": 68.74075992907801,
+      "voice": "lead",
+      "duration_seconds": 3.3415647187746202,
+      "id": "shot_017"
+    },
+    {
+      "index": 17,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Dream to reality, let it breathe slow",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        69.92,
+        70.42133333333334
+      ],
+      "start_seconds": 68.74075992907801,
+      "end_seconds": 72.08232464785263,
+      "voice": "lead",
+      "duration_seconds": 3.3415647187746202,
+      "id": "shot_018"
+    },
+    {
+      "index": 18,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "North by Northwest, where the dreams go",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        73.408,
+        73.90933333333334
+      ],
+      "start_seconds": 72.08232464785263,
+      "end_seconds": 75.42388936662725,
+      "voice": "lead",
+      "duration_seconds": 3.3415647187746202,
+      "id": "shot_019"
+    },
+    {
+      "index": 19,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Lock the deal in, watch the whole world glow",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        77.41866666666667,
+        77.86666666666666
+      ],
+      "start_seconds": 75.42388936662725,
+      "end_seconds": 79.72018686219462,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567373,
+      "id": "shot_020"
+    },
+    {
+      "index": 20,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "(North by Northwest) / (Dream to reality)",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        80.416,
+        80.90666666666667
+      ],
+      "start_seconds": 79.72018686219462,
+      "end_seconds": 81.91045617366035,
+      "voice": "lead",
+      "duration_seconds": 2.190269311465727,
+      "id": "shot_021"
+    },
+    {
+      "index": 21,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "(Dream to reality)",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        82.4,
+        82.90133333333333
+      ],
+      "start_seconds": 81.91045617366035,
+      "end_seconds": 83.34255533884948,
+      "voice": "lead",
+      "duration_seconds": 1.432099165189129,
+      "id": "shot_022"
+    },
+    {
+      "index": 22,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "I'm seeing consortia in the same hard room",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        85.408,
+        85.90933333333334
+      ],
+      "start_seconds": 83.34255533884948,
+      "end_seconds": 87.63885283441685,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567373,
+      "id": "shot_023"
+    },
+    {
+      "index": 23,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Every builder on deck with a shared-out moon",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        89.408,
+        89.888
+      ],
+      "start_seconds": 87.63885283441685,
+      "end_seconds": 91.93515032998422,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567373,
+      "id": "shot_024"
+    },
+    {
+      "index": 24,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "No empty talk, just a signed-up truce",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        93.408,
+        93.90933333333334
+      ],
+      "start_seconds": 91.93515032998422,
+      "end_seconds": 95.75408143715522,
+      "voice": "lead",
+      "duration_seconds": 3.8189311071709966,
+      "id": "shot_025"
+    },
+    {
+      "index": 25,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Tech so advanced make the future move",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        97.408,
+        97.90933333333334
+      ],
+      "start_seconds": 95.75408143715522,
+      "end_seconds": 99.09564615592984,
+      "voice": "lead",
+      "duration_seconds": 3.3415647187746202,
+      "id": "shot_026"
+    },
+    {
+      "index": 26,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "From the basalt dust to the resource vein",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        100.90666666666667,
+        101.39733333333334
+      ],
+      "start_seconds": 99.09564615592984,
+      "end_seconds": 102.91457726310084,
+      "voice": "lead",
+      "duration_seconds": 3.8189311071709966,
+      "id": "shot_027"
+    },
+    {
+      "index": 27,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Fuel from the void, let it change the game",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        104.896,
+        105.408
+      ],
+      "start_seconds": 102.91457726310084,
+      "end_seconds": 107.21087475866821,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567373,
+      "id": "shot_028"
+    },
+    {
+      "index": 28,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Less fight, more light, let the peace get named",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        108.88533333333334,
+        109.408
+      ],
+      "start_seconds": 107.21087475866821,
+      "end_seconds": 111.50717225423558,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567373,
+      "id": "shot_029"
+    },
+    {
+      "index": 29,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Human space age, that's the frame I claim",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        113.408,
+        113.84533333333333
+      ],
+      "start_seconds": 111.50717225423558,
+      "end_seconds": 115.80346974980296,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567373,
+      "id": "shot_030"
+    },
+    {
+      "index": 30,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "DJ Gifted Prophet, I don't chase applause",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        117.408,
+        117.89866666666667
+      ],
+      "start_seconds": 115.80346974980296,
+      "end_seconds": 119.62240085697395,
+      "voice": "lead",
+      "duration_seconds": 3.8189311071709966,
+      "id": "shot_031"
+    },
+    {
+      "index": 31,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "I chase that moment when the whole world walks",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        121.408,
+        121.90933333333334
+      ],
+      "start_seconds": 119.62240085697395,
+      "end_seconds": 123.91869835254133,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567373,
+      "id": "shot_032"
+    },
+    {
+      "index": 32,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Side by side, no border talk",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        124.91733333333333,
+        125.408
+      ],
+      "start_seconds": 123.91869835254133,
+      "end_seconds": 126.78289668291957,
+      "voice": "lead",
+      "duration_seconds": 2.864198330378244,
+      "id": "shot_033"
+    },
+    {
+      "index": 33,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Just a common sky and a stronger cause",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        128.40533333333335,
+        128.90666666666667
+      ],
+      "start_seconds": 126.78289668291957,
+      "end_seconds": 130.60182779009057,
+      "voice": "lead",
+      "duration_seconds": 3.8189311071709966,
+      "id": "shot_034"
+    },
+    {
+      "index": 34,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "If the deal hit right, we can level this fast",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        132.90666666666667,
+        133.408
+      ],
+      "start_seconds": 130.60182779009057,
+      "end_seconds": 135.37549167405433,
+      "voice": "lead",
+      "duration_seconds": 4.7736638839637635,
+      "id": "shot_035"
+    },
+    {
+      "index": 35,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "All the startups linked, all the agencies hashed",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        136.90666666666667,
+        137.408
+      ],
+      "start_seconds": 135.37549167405433,
+      "end_seconds": 139.19442278122534,
+      "voice": "lead",
+      "duration_seconds": 3.818931107171011,
+      "id": "shot_036"
+    },
+    {
+      "index": 36,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "One table, one vow, let the old fear pass",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        140.93866666666668,
+        141.408
+      ],
+      "start_seconds": 139.19442278122534,
+      "end_seconds": 143.49072027679273,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567387,
+      "id": "shot_037"
+    },
+    {
+      "index": 37,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "We can build something true that was made to last",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        145.39733333333334,
+        145.89866666666666
+      ],
+      "start_seconds": 143.49072027679273,
+      "end_seconds": 148.2643841607565,
+      "voice": "lead",
+      "duration_seconds": 4.7736638839637635,
+      "id": "shot_038"
+    },
+    {
+      "index": 38,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "North by Northwest, where the dreams go",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        149.90933333333334,
+        150.41066666666666
+      ],
+      "start_seconds": 148.2643841607565,
+      "end_seconds": 151.60594887953113,
+      "voice": "lead",
+      "duration_seconds": 3.3415647187746345,
+      "id": "shot_039"
+    },
+    {
+      "index": 39,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Dream to reality, let it breathe slow",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        152.91733333333335,
+        153.39733333333334
+      ],
+      "start_seconds": 151.60594887953113,
+      "end_seconds": 154.94751359830576,
+      "voice": "lead",
+      "duration_seconds": 3.3415647187746345,
+      "id": "shot_040"
+    },
+    {
+      "index": 40,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "North by Northwest, where the dreams go",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        156.40533333333335,
+        156.91733333333335
+      ],
+      "start_seconds": 154.94751359830576,
+      "end_seconds": 158.2890783170804,
+      "voice": "lead",
+      "duration_seconds": 3.3415647187746345,
+      "id": "shot_041"
+    },
+    {
+      "index": 41,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Lock the deal in, watch the whole world glow",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        160.40533333333335,
+        160.90666666666667
+      ],
+      "start_seconds": 158.2890783170804,
+      "end_seconds": 162.58537581264778,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567387,
+      "id": "shot_042"
+    },
+    {
+      "index": 42,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "(North by Northwest) / (Dream to reality)",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        163.40266666666668,
+        163.904
+      ],
+      "start_seconds": 162.58537581264778,
+      "end_seconds": 164.7756451241135,
+      "voice": "lead",
+      "duration_seconds": 2.190269311465727,
+      "id": "shot_043"
+    },
+    {
+      "index": 43,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "(Dream to reality) / From a spark to a system",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        166.42133333333334,
+        166.912
+      ],
+      "start_seconds": 164.7756451241135,
+      "end_seconds": 168.0610490913121,
+      "voice": "lead",
+      "duration_seconds": 3.28540396719859,
+      "id": "shot_044"
+    },
+    {
+      "index": 44,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "From a spark to a system / From a wish to a mission",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        169.90933333333334,
+        170.41066666666666
+      ],
+      "start_seconds": 168.0610490913121,
+      "end_seconds": 172.44158771424355,
+      "voice": "lead",
+      "duration_seconds": 4.380538622931454,
+      "id": "shot_045"
+    },
+    {
+      "index": 45,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "From a wish to a mission / From the lone night vision",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        174.42133333333334,
+        174.92266666666666
+      ],
+      "start_seconds": 172.44158771424355,
+      "end_seconds": 176.45708145193072,
+      "voice": "lead",
+      "duration_seconds": 4.015493737687166,
+      "id": "shot_046"
+    },
+    {
+      "index": 46,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "From the lone night vision / To a world in position",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        177.90933333333334,
+        178.41066666666666
+      ],
+      "start_seconds": 176.45708145193072,
+      "end_seconds": 180.1075303043736,
+      "voice": "lead",
+      "duration_seconds": 3.650448852442878,
+      "id": "shot_047"
+    },
+    {
+      "index": 47,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "To a world in position / Let the old walls fade",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        181.89866666666666,
+        182.41066666666666
+      ],
+      "start_seconds": 180.1075303043736,
+      "end_seconds": 183.75797915681648,
+      "voice": "lead",
+      "duration_seconds": 3.650448852442878,
+      "id": "shot_048"
+    },
+    {
+      "index": 48,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Let the old walls fade / Let the new bonds stay",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        185.39733333333334,
+        185.90933333333334
+      ],
+      "start_seconds": 183.75797915681648,
+      "end_seconds": 187.40842800925935,
+      "voice": "lead",
+      "duration_seconds": 3.650448852442878,
+      "id": "shot_049"
+    },
+    {
+      "index": 49,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Let the new bonds stay / If we move this way",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        188.90666666666667,
+        189.408
+      ],
+      "start_seconds": 187.40842800925935,
+      "end_seconds": 191.05887686170223,
+      "voice": "lead",
+      "duration_seconds": 3.650448852442878,
+      "id": "shot_050"
+    },
+    {
+      "index": 50,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "If we move this way / Peace can learn to play",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        192.416,
+        192.91733333333335
+      ],
+      "start_seconds": 191.05887686170223,
+      "end_seconds": 194.7093257141451,
+      "voice": "lead",
+      "duration_seconds": 3.650448852442878,
+      "id": "shot_051"
+    },
+    {
+      "index": 51,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Peace can learn to play",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        195.88266666666667,
+        196.39466666666667
+      ],
+      "start_seconds": 194.7093257141451,
+      "end_seconds": 197.096157656127,
+      "voice": "lead",
+      "duration_seconds": 2.3868319419818818,
+      "id": "shot_052"
+    },
+    {
+      "index": 52,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "North by Northwest, where the dreams go",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        198.42133333333334,
+        198.92266666666666
+      ],
+      "start_seconds": 197.096157656127,
+      "end_seconds": 200.43772237490163,
+      "voice": "lead",
+      "duration_seconds": 3.3415647187746345,
+      "id": "shot_053"
+    },
+    {
+      "index": 53,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Dream to reality, let it breathe slow",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        201.90933333333334,
+        202.41066666666666
+      ],
+      "start_seconds": 200.43772237490163,
+      "end_seconds": 203.77928709367626,
+      "voice": "lead",
+      "duration_seconds": 3.3415647187746345,
+      "id": "shot_054"
+    },
+    {
+      "index": 54,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "North by Northwest, where the dreams go",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        205.39733333333334,
+        205.89866666666666
+      ],
+      "start_seconds": 203.77928709367626,
+      "end_seconds": 207.1208518124509,
+      "voice": "lead",
+      "duration_seconds": 3.3415647187746345,
+      "id": "shot_055"
+    },
+    {
+      "index": 55,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "Lock the deal in, watch the whole world glow",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        208.90666666666667,
+        209.408
+      ],
+      "start_seconds": 207.1208518124509,
+      "end_seconds": 211.41714930801828,
+      "voice": "lead",
+      "duration_seconds": 4.296297495567387,
+      "id": "shot_056"
+    },
+    {
+      "index": 56,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "(North by Northwest)",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        211.904,
+        212.40533333333335
+      ],
+      "start_seconds": 211.41714930801828,
+      "end_seconds": 212.8492484732074,
+      "voice": "lead",
+      "duration_seconds": 1.432099165189129,
+      "id": "shot_057"
+    },
+    {
+      "index": 57,
+      "name": "lyric",
+      "type": "lyric",
+      "text_canonical": "(Dream to reality)",
+      "sound": "lead vocal phrase",
+      "function": "carry vocal narrative",
+      "energy": 0.5,
+      "nearest_beat_times": [
+        224.91733333333335,
+        225.408
+      ],
+      "start_seconds": 212.8492484732074,
+      "end_seconds": 237.55997916666666,
+      "voice": "lead",
+      "duration_seconds": 24.710730693459254,
+      "id": "shot_058"
+    }
+  ]
+}

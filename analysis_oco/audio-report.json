@@ -1,0 +1,32 @@
+{
+  "source": "/home/lingleblater/vidmuse-local/On-Chain OG.mp3",
+  "probe": {
+    "programs": [],
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "mp3",
+        "codec_type": "audio",
+        "sample_rate": "48000",
+        "channels": 2,
+        "channel_layout": "stereo"
+      },
+      {
+        "index": 1,
+        "codec_name": "mjpeg",
+        "codec_type": "video"
+      }
+    ],
+    "format": {
+      "format_name": "mp3",
+      "start_time": "0.023021",
+      "duration": "148.440000",
+      "bit_rate": "186985"
+    }
+  },
+  "silence_intervals": [],
+  "silence_threshold": {
+    "noise": "-45dB",
+    "minimum_duration": 0.3
+  }
+}

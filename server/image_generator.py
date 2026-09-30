@@ -2,10 +2,11 @@
 
 Supports:
   - z-image turbo text-to-image (generating image references)
-  - Wan 2.1 image-to-video
-  - FLUX Dev (fallback)
+  - Wan 2.1 image-to-video / InfiniteTalk lip-sync
+  - MiniMax H3 Reference-to-Video (open weights, local + cloud)
+  - LTX-2.3 image+audio→video (IA2V)
   - HuMo lip-sync workflow
-  - LTX-2.3 image-to-video workflow
+  - FLUX Dev (fallback)
   - Intel XPU ComfyUI (auto-detect + auto-install)
 """
 
@@ -55,6 +56,19 @@ _DEFAULT_LTX_TEXT_ENCODER = "gemma_3_12B_it.safetensors"
 _DEFAULT_INFINITETALK_UNET = "wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
 _DEFAULT_INFINITETALK_PATCH = "wan2.1_infiniteTalk_single_fp16.safetensors"
 _DEFAULT_INFINITETALK_AUDIO_ENC = "wav2vec2_large_english_fp16.safetensors"
+# MiniMax H3 Reference-to-Video (open weights; local ComfyUI ≥ 0.30)
+# R2V uses ref2va weights — not the fl2va I2V/T2V set.
+_DEFAULT_H3_UNET = "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+_DEFAULT_H3_CLIP = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+_DEFAULT_H3_VIDEO_VAE = "minimax_h3_video_vae_fp16.safetensors"
+_DEFAULT_H3_AUDIO_VAE = "minimax_h3_audio_vae_fp32.safetensors"
+_DEFAULT_H3_LIGHTNING_LORA = "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+
+
+def _h3_align_frames(num_frames: int) -> int:
+    """Align MiniMax H3 length to supported 5 + 17k frame counts (@24fps)."""
+    n = max(5, int(num_frames))
+    return n + (5 - (n % 17)) % 17
 
 
 def _resolve_comfy_config(
@@ -791,12 +805,14 @@ class ComfyUIClient:
             "watermark, text overlay, jitter, flicker, washed colors"
         ),
     ) -> Dict[str, Any]:
-        """Native LTX-2.3 image + audio → video (no partner/API nodes).
+        """Native LTX-2.3 image + audio → video (IA2V), local + cloud.
 
-        Matches the official single-stage distilled I2V shape:
-        Empty video latent + ImgToVideoConditionOnly + Empty audio latent → ConcatAV,
-        with LTXVReferenceAudio guiding from the music slice; CreateVideo muxes the
-        original audio for faithful playback.
+        Aligned with Comfy's official ``video_ltx2_3_ia2v`` single-stage core:
+        preprocess image → EmptyLTXVLatentVideo → LTXVImgToVideoInplace,
+        encode the song slice with LTXVAudioVAEEncode → ConcatAV → sample.
+        CreateVideo always muxes the **user** audio (master-safe), never decoded
+        model audio. Defaults target distilled local checkpoints; override via env
+        for the full two-stage dev template weights if desired.
         """
         if not audio_name:
             raise ValueError("LTX-2.3 A/V i2v requires an audio input")
@@ -815,13 +831,14 @@ class ComfyUIClient:
         ckpt = os.getenv("COMFY_LTX_CKPT", _DEFAULT_LTX_CKPT)
         text_enc = os.getenv("COMFY_LTX_TEXT_ENCODER", _DEFAULT_LTX_TEXT_ENCODER)
         fps = float(os.getenv("COMFY_LTX_FPS", "24"))
-        fps_i = max(1, int(round(fps)))
         steps = int(os.getenv("COMFY_LTX_STEPS", "8"))
         cfg = float(os.getenv("COMFY_LTX_CFG", "1.0"))
         strength = float(os.getenv("COMFY_LTX_I2V_STRENGTH", "0.85"))
+        audio_mode = (os.getenv("COMFY_LTX_AUDIO_MODE") or "encode").strip().lower()
         identity_scale = float(os.getenv("COMFY_LTX_AUDIO_IDENTITY", "1.0"))
+        sampler_name = os.getenv("COMFY_LTX_SAMPLER", "euler")
 
-        return {
+        workflow: Dict[str, Any] = {
             # Media
             "1": {"inputs": {"image": image_name}, "class_type": "LoadImage"},
             "2": {"inputs": {"audio": audio_name}, "class_type": "LoadAudio"},
@@ -863,7 +880,7 @@ class ComfyUIClient:
                 },
                 "class_type": "LTXVConditioning",
             },
-            # Image-locked video latent + size-matched empty audio latent
+            # Image-locked video latent (official IA2V uses ImgToVideoInplace)
             "30": {
                 "inputs": {
                     "width": width,
@@ -879,10 +896,26 @@ class ComfyUIClient:
                     "image": ["3", 0],
                     "latent": ["30", 0],
                     "strength": strength,
+                    **(
+                        {"bypass": False}
+                        if (os.getenv("COMFY_LTX_I2V_NODE") or "inplace").strip().lower()
+                        != "condition"
+                        else {}
+                    ),
                 },
-                "class_type": "LTXVImgToVideoConditionOnly",
+                "class_type": (
+                    "LTXVImgToVideoConditionOnly"
+                    if (os.getenv("COMFY_LTX_I2V_NODE") or "inplace").strip().lower()
+                    == "condition"
+                    else "LTXVImgToVideoInplace"
+                ),
             },
-            "32": {
+        }
+
+        if audio_mode in ("reference", "ref", "identity"):
+            # Legacy distilled path: empty audio latent + ReferenceAudio guidance
+            fps_i = max(1, int(round(fps)))
+            workflow["32"] = {
                 "inputs": {
                     "frames_number": length,
                     "frame_rate": fps_i,
@@ -890,16 +923,15 @@ class ComfyUIClient:
                     "audio_vae": ["12", 0],
                 },
                 "class_type": "LTXVEmptyLatentAudio",
-            },
-            "33": {
+            }
+            workflow["33"] = {
                 "inputs": {
                     "video_latent": ["31", 0],
                     "audio_latent": ["32", 0],
                 },
                 "class_type": "LTXVConcatAVLatent",
-            },
-            # Music slice → audio identity / A2V guidance
-            "34": {
+            }
+            workflow["34"] = {
                 "inputs": {
                     "model": ["10", 0],
                     "positive": ["22", 0],
@@ -911,72 +943,283 @@ class ComfyUIClient:
                     "end_percent": 1.0,
                 },
                 "class_type": "LTXVReferenceAudio",
-            },
-            # Sampling
-            "40": {
+            }
+            model_src, pos_src, neg_src = ["34", 0], ["34", 1], ["34", 2]
+            latent_src = ["33", 0]
+            sampler_name = os.getenv("COMFY_LTX_SAMPLER", "euler_ancestral_cfg_pp")
+        else:
+            # Official IA2V: encode the music slice into the AV latent
+            workflow["32"] = {
                 "inputs": {
-                    "steps": steps,
-                    "max_shift": 2.05,
-                    "base_shift": 0.95,
-                    "stretch": True,
-                    "terminal": 0.1,
-                    "latent": ["33", 0],
-                },
-                "class_type": "LTXVScheduler",
-            },
-            "41": {
-                "inputs": {"sampler_name": "euler_ancestral_cfg_pp"},
-                "class_type": "KSamplerSelect",
-            },
-            "42": {
-                "inputs": {"noise_seed": seed},
-                "class_type": "RandomNoise",
-            },
-            "43": {
-                "inputs": {
-                    "model": ["34", 0],
-                    "positive": ["34", 1],
-                    "negative": ["34", 2],
-                    "cfg": cfg,
-                },
-                "class_type": "CFGGuider",
-            },
-            "44": {
-                "inputs": {
-                    "noise": ["42", 0],
-                    "guider": ["43", 0],
-                    "sampler": ["41", 0],
-                    "sigmas": ["40", 0],
-                    "latent_image": ["33", 0],
-                },
-                "class_type": "SamplerCustomAdvanced",
-            },
-            "45": {
-                "inputs": {"av_latent": ["44", 0]},
-                "class_type": "LTXVSeparateAVLatent",
-            },
-            "50": {
-                "inputs": {"samples": ["45", 0], "vae": ["10", 2]},
-                "class_type": "VAEDecode",
-            },
-            "51": {
-                "inputs": {
-                    "images": ["50", 0],
-                    "fps": fps,
                     "audio": ["2", 0],
+                    "audio_vae": ["12", 0],
                 },
-                "class_type": "CreateVideo",
-            },
-            "52": {
+                "class_type": "LTXVAudioVAEEncode",
+            }
+            workflow["33"] = {
                 "inputs": {
-                    "video": ["51", 0],
-                    "filename_prefix": "vidmuse_ltx23",
-                    "format": "mp4",
-                    "codec": "h264",
+                    "video_latent": ["31", 0],
+                    "audio_latent": ["32", 0],
                 },
-                "class_type": "SaveVideo",
+                "class_type": "LTXVConcatAVLatent",
+            }
+            model_src, pos_src, neg_src = ["10", 0], ["22", 0], ["22", 1]
+            latent_src = ["33", 0]
+
+        workflow.update(
+            {
+                "40": {
+                    "inputs": {
+                        "steps": steps,
+                        "max_shift": 2.05,
+                        "base_shift": 0.95,
+                        "stretch": True,
+                        "terminal": 0.1,
+                        "latent": latent_src,
+                    },
+                    "class_type": "LTXVScheduler",
+                },
+                "41": {
+                    "inputs": {"sampler_name": sampler_name},
+                    "class_type": "KSamplerSelect",
+                },
+                "42": {
+                    "inputs": {"noise_seed": seed},
+                    "class_type": "RandomNoise",
+                },
+                "43": {
+                    "inputs": {
+                        "model": model_src,
+                        "positive": pos_src,
+                        "negative": neg_src,
+                        "cfg": cfg,
+                    },
+                    "class_type": "CFGGuider",
+                },
+                "44": {
+                    "inputs": {
+                        "noise": ["42", 0],
+                        "guider": ["43", 0],
+                        "sampler": ["41", 0],
+                        "sigmas": ["40", 0],
+                        "latent_image": latent_src,
+                    },
+                    "class_type": "SamplerCustomAdvanced",
+                },
+                "45": {
+                    "inputs": {"av_latent": ["44", 0]},
+                    "class_type": "LTXVSeparateAVLatent",
+                },
+                "50": {
+                    "inputs": {"samples": ["45", 0], "vae": ["10", 2]},
+                    "class_type": "VAEDecode",
+                },
+                # Always mux the user's song slice — discard any model audio
+                "51": {
+                    "inputs": {
+                        "images": ["50", 0],
+                        "fps": fps,
+                        "audio": ["2", 0],
+                    },
+                    "class_type": "CreateVideo",
+                },
+                "52": {
+                    "inputs": {
+                        "video": ["51", 0],
+                        "filename_prefix": "vidmuse_ltx23",
+                        "format": "mp4",
+                        "codec": "h264",
+                    },
+                    "class_type": "SaveVideo",
+                },
+            }
+        )
+        return workflow
+
+    def _build_minimax_h3_r2v_workflow(
+        self,
+        image_name: str,
+        audio_name: str,
+        prompt: str,
+        num_frames: int = 124,
+        seed: Optional[int] = None,
+        width: int = 768,
+        height: int = 448,
+        previous_image_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Native MiniMax H3 Reference-to-Video (open weights).
+
+        Uses ``MiniMaxH3ReferenceToVideo`` with flat dotted sockets
+        (``ref_images.ref_image_0``, ``ref_audios.ref_audio_0``) — nested dicts are
+        ignored by Comfy ``/prompt``. Prompt tags are ``<Picture 1>`` / ``<Audio 1>``.
+        CreateVideo muxes the **user** audio slice (H3 stereo is discarded).
+        Works on local ComfyUI ≥ 0.30 and Comfy Cloud with the same graph.
+        """
+        if not audio_name:
+            raise ValueError("MiniMax H3 R2V requires an audio input")
+        if seed is None:
+            seed = int(time.time()) % (2**32)
+
+        length = _h3_align_frames(num_frames)
+        length = min(length, int(os.getenv("COMFY_H3_MAX_FRAMES", "362")))
+        length = _h3_align_frames(length)
+
+        width = max(64, (int(width) // 32) * 32)
+        height = max(64, (int(height) // 32) * 32)
+
+        unet = os.getenv("COMFY_H3_UNET", _DEFAULT_H3_UNET)
+        clip = os.getenv("COMFY_H3_CLIP", _DEFAULT_H3_CLIP)
+        video_vae = os.getenv("COMFY_H3_VIDEO_VAE", _DEFAULT_H3_VIDEO_VAE)
+        audio_vae = os.getenv("COMFY_H3_AUDIO_VAE", _DEFAULT_H3_AUDIO_VAE)
+        weight_dtype = os.getenv("COMFY_H3_WEIGHT_DTYPE", "default")
+        fps = float(os.getenv("COMFY_H3_FPS", "24"))
+        steps = int(os.getenv("COMFY_H3_STEPS", "20"))
+        sampler_name = os.getenv("COMFY_H3_SAMPLER", "res_multistep")
+        scheduler = os.getenv("COMFY_H3_SCHEDULER", "simple")
+        ref_image_size = os.getenv("COMFY_H3_REF_IMAGE_SIZE", "match")
+        use_lightning = (os.getenv("COMFY_H3_LIGHTNING") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        if use_lightning:
+            steps = int(os.getenv("COMFY_H3_LIGHTNING_STEPS", "4"))
+
+        # Official R2V prompts address refs with 1-based Picture/Audio tags
+        tagged = prompt.strip()
+        if "<Picture 1>" not in tagged and "<picture 1>" not in tagged.lower():
+            tagged = (
+                f"<Picture 1> is the performer identity. "
+                f"They sing to camera matching <Audio 1> with accurate lip sync. "
+                f"{tagged}"
+            )
+        elif "<Audio 1>" not in tagged and "<audio 1>" not in tagged.lower():
+            tagged = f"{tagged} Match lip sync and performance energy to <Audio 1>."
+
+        workflow: Dict[str, Any] = {
+            "1": {"inputs": {"image": image_name}, "class_type": "LoadImage"},
+            "2": {"inputs": {"audio": audio_name}, "class_type": "LoadAudio"},
+            "10": {
+                "inputs": {"unet_name": unet, "weight_dtype": weight_dtype},
+                "class_type": "UNETLoader",
+            },
+            "11": {
+                "inputs": {
+                    "clip_name": clip,
+                    "type": "minimax",
+                    "device": "default",
+                },
+                "class_type": "CLIPLoader",
+            },
+            "12": {
+                "inputs": {"vae_name": video_vae},
+                "class_type": "VAELoader",
+            },
+            "13": {
+                "inputs": {"vae_name": audio_vae},
+                "class_type": "VAELoader",
             },
         }
+
+        model_ref: Any = ["10", 0]
+        if use_lightning:
+            lora = os.getenv("COMFY_H3_LIGHTNING_LORA", _DEFAULT_H3_LIGHTNING_LORA)
+            workflow["14"] = {
+                "inputs": {
+                    "model": ["10", 0],
+                    "lora_name": lora,
+                    "strength_model": float(os.getenv("COMFY_H3_LIGHTNING_STRENGTH", "1.0")),
+                },
+                "class_type": "LoraLoaderModelOnly",
+            }
+            model_ref = ["14", 0]
+
+        r2v_inputs: Dict[str, Any] = {
+            "clip": ["11", 0],
+            "vae": ["12", 0],
+            "audio_vae": ["13", 0],
+            "prompt": tagged,
+            "width": width,
+            "height": height,
+            "length": length,
+            "ref_image_size": ref_image_size,
+            # Flat dotted keys required for growable slots on /prompt
+            "ref_images.ref_image_0": ["1", 0],
+            "ref_audios.ref_audio_0": ["2", 0],
+        }
+        if previous_image_name:
+            workflow["3"] = {
+                "inputs": {"image": previous_image_name},
+                "class_type": "LoadImage",
+            }
+            r2v_inputs["ref_images.ref_image_1"] = ["3", 0]
+
+        workflow["20"] = {
+            "inputs": r2v_inputs,
+            "class_type": "MiniMaxH3ReferenceToVideo",
+        }
+        workflow.update(
+            {
+                "30": {
+                    "inputs": {"noise_seed": seed},
+                    "class_type": "RandomNoise",
+                },
+                "31": {
+                    "inputs": {"sampler_name": sampler_name},
+                    "class_type": "KSamplerSelect",
+                },
+                "32": {
+                    "inputs": {
+                        "model": model_ref,
+                        "scheduler": scheduler,
+                        "steps": steps,
+                        "denoise": 1.0,
+                    },
+                    "class_type": "BasicScheduler",
+                },
+                "33": {
+                    "inputs": {
+                        "model": model_ref,
+                        "conditioning": ["20", 0],
+                    },
+                    "class_type": "BasicGuider",
+                },
+                "34": {
+                    "inputs": {
+                        "noise": ["30", 0],
+                        "guider": ["33", 0],
+                        "sampler": ["31", 0],
+                        "sigmas": ["32", 0],
+                        "latent_image": ["20", 1],
+                    },
+                    "class_type": "SamplerCustomAdvanced",
+                },
+                "40": {
+                    "inputs": {"samples": ["34", 0], "vae": ["12", 0]},
+                    "class_type": "VAEDecode",
+                },
+                # Mux user song slice — do not use VAEDecodeAudio / H3 stereo
+                "50": {
+                    "inputs": {
+                        "images": ["40", 0],
+                        "fps": fps,
+                        "audio": ["2", 0],
+                    },
+                    "class_type": "CreateVideo",
+                },
+                "51": {
+                    "inputs": {
+                        "video": ["50", 0],
+                        "filename_prefix": "vidmuse_h3",
+                        "format": "mp4",
+                        "codec": "h264",
+                    },
+                    "class_type": "SaveVideo",
+                },
+            }
+        )
+        return workflow
 
     def _build_infinitetalk_workflow(
         self,
@@ -1164,7 +1407,7 @@ class ComfyUIClient:
             print("[ComfyUI] image+audio video requires a local audio_path")
             return None
 
-        backend = (backend or os.getenv("COMFY_VIDEO_BACKEND") or "infinitetalk").strip().lower()
+        backend = (backend or os.getenv("COMFY_VIDEO_BACKEND") or "minimax-h3").strip().lower()
         headers = self._headers()
         async with aiohttp.ClientSession(headers=headers) as session:
             image_name = await self._upload_input_file(session, image_path, "image")
@@ -1209,6 +1452,34 @@ class ComfyUIClient:
                 height=out_h,
                 previous_frames_name=prev_name,
             )
+        elif backend in ("minimax-h3", "minimax_h3", "h3", "minimax"):
+            fps = float(os.getenv("COMFY_H3_FPS", "24"))
+            frames = num_frames
+            if duration is not None:
+                frames = max(5, int(round(float(duration) * fps)))
+            frames = _h3_align_frames(frames)
+            frames = min(frames, int(os.getenv("COMFY_H3_MAX_FRAMES", "362")))
+            frames = _h3_align_frames(frames)
+            # Native H3 canvas: 768 short edge @ ~16:9 (0.4 MP preview-friendly default)
+            out_w = int(os.getenv("COMFY_H3_WIDTH", str(width if width >= 640 else 768)))
+            out_h = int(os.getenv("COMFY_H3_HEIGHT", str(height if height >= 360 else 448)))
+            if width < height:
+                out_w = int(os.getenv("COMFY_H3_WIDTH", "448"))
+                out_h = int(os.getenv("COMFY_H3_HEIGHT", "768"))
+            h3_prompt = (
+                f"{prompt}. <Picture 1> sings to camera matching <Audio 1> with "
+                f"accurate lip sync, expressive face, consistent identity."
+            )
+            workflow = self._build_minimax_h3_r2v_workflow(
+                image_name=image_name,
+                audio_name=audio_name,
+                prompt=h3_prompt,
+                num_frames=frames,
+                seed=seed,
+                width=out_w,
+                height=out_h,
+                previous_image_name=prev_name,
+            )
         elif backend in ("humo", "wan", "wan-humo"):
             fps = float(os.getenv("COMFY_HUMO_FPS", "25"))
             frames = num_frames
@@ -1251,8 +1522,26 @@ class ComfyUIClient:
                 height=height,
             )
 
-        path = await self._dispatch_workflow(workflow, wait_timeout=1200)
-        # Soft-fallback chain: InfiniteTalk/LTX → HuMo
+        path = await self._dispatch_workflow(workflow, wait_timeout=1800)
+        # Soft-fallback: H3 → InfiniteTalk → HuMo; others → HuMo
+        if not path and backend in ("minimax-h3", "minimax_h3", "h3", "minimax"):
+            print("[ComfyUI] MiniMax H3 failed — falling back to InfiniteTalk")
+            fps = float(os.getenv("COMFY_INFINITETALK_FPS", "25"))
+            frames = max(5, int(round(float(duration or 3.5) * fps)))
+            if (frames - 1) % 4 != 0:
+                frames = ((frames - 1) // 4) * 4 + 1
+            frames = min(frames, int(os.getenv("COMFY_INFINITETALK_MAX_FRAMES", "81")))
+            workflow = self._build_infinitetalk_workflow(
+                image_name=image_name,
+                audio_name=audio_name,
+                prompt=f"{prompt}, lip sync singing, consistent identity",
+                num_frames=frames,
+                seed=seed,
+                width=480,
+                height=832,
+                previous_frames_name=prev_name,
+            )
+            path = await self._dispatch_workflow(workflow, wait_timeout=1200)
         if not path and backend not in ("humo", "wan", "wan-humo"):
             print(f"[ComfyUI] {backend} failed — falling back to HuMo lip-sync")
             fps = float(os.getenv("COMFY_HUMO_FPS", "25"))
@@ -2295,6 +2584,7 @@ class ComfyUIClient:
                             result["model_count"] = len(models)
                             result["resolved_turbo_ckpt"] = self._default_ckpt("turbo")
                             result["local_image_backend"] = self._local_image_backend()
+                            result["video_models"] = self._probe_video_backend_models(models)
                             if self._model_probe_error:
                                 result["model_probe_error"] = self._model_probe_error
                             try:
@@ -2340,3 +2630,55 @@ class ComfyUIClient:
             except Exception as detect_exc:
                 result["detection_error"] = str(detect_exc)
         return result
+
+    @staticmethod
+    def _model_list_has(models: List[str], *needles: str) -> bool:
+        lower = [m.lower() for m in models]
+        for needle in needles:
+            n = needle.lower()
+            if any(n in m or Path(m).name.lower() == Path(n).name.lower() for m in lower):
+                return True
+        return False
+
+    def _probe_video_backend_models(self, models: List[str]) -> Dict[str, Any]:
+        """Report which open video backends look installable on local Comfy."""
+        h3_unet = os.getenv("COMFY_H3_UNET", _DEFAULT_H3_UNET)
+        h3_clip = os.getenv("COMFY_H3_CLIP", _DEFAULT_H3_CLIP)
+        h3_vvae = os.getenv("COMFY_H3_VIDEO_VAE", _DEFAULT_H3_VIDEO_VAE)
+        h3_avae = os.getenv("COMFY_H3_AUDIO_VAE", _DEFAULT_H3_AUDIO_VAE)
+        ltx_ckpt = os.getenv("COMFY_LTX_CKPT", _DEFAULT_LTX_CKPT)
+        ltx_te = os.getenv("COMFY_LTX_TEXT_ENCODER", _DEFAULT_LTX_TEXT_ENCODER)
+        it_unet = os.getenv("COMFY_INFINITETALK_UNET", _DEFAULT_INFINITETALK_UNET)
+        it_patch = os.getenv("COMFY_INFINITETALK_PATCH", _DEFAULT_INFINITETALK_PATCH)
+        humo_unet = os.getenv("COMFY_HUMO_UNET", _DEFAULT_HUMO_UNET)
+
+        h3_ok = all(
+            self._model_list_has(models, name)
+            for name in (h3_unet, h3_clip, h3_vvae, h3_avae)
+        ) or self._model_list_has(models, "minimax_h3_ref2va")
+        ltx_ok = self._model_list_has(models, ltx_ckpt, "ltx-2.3", "ltx_2.3")
+        it_ok = self._model_list_has(models, it_patch, "infinitetalk", "infiniteTalk")
+        humo_ok = self._model_list_has(models, humo_unet, "humo")
+
+        return {
+            "minimax-h3": {
+                "ready": h3_ok,
+                "requires": [h3_unet, h3_clip, h3_vvae, h3_avae],
+                "note": "ComfyUI ≥ 0.30; HF Comfy-Org/MiniMax-H3 (ref2va + VAEs + Qwen3VL)",
+            },
+            "ltx23": {
+                "ready": ltx_ok,
+                "requires": [ltx_ckpt, ltx_te],
+                "note": "Official IA2V-style graph; distilled fp8 recommended for local",
+            },
+            "infinitetalk": {
+                "ready": it_ok or self._model_list_has(models, it_unet),
+                "requires": [it_unet, it_patch],
+            },
+            "humo": {
+                "ready": humo_ok,
+                "requires": [humo_unet],
+            },
+            "comfy_url": self.url,
+            "backend": self.backend,
+        }

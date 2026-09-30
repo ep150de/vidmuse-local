@@ -1,0 +1,28 @@
+{
+  "song": "Lunar Cargo Route.mp3",
+  "duration": 213.624,
+  "concept": "Lunar cargo logistics — neon paper-cut lunar agency world. Singer = cargo-runner pilot (fixed look, NO hue-shift). Alternate CLOSEUP lip-sync (distinct, non-reworded, NO on-screen text ever) with THEME/WORLD cargo shots. Lyric text NEVER rendered into frames.",
+  "scenes": [
+    {"scene": 0,  "start": 0.0,   "end": 10.0,  "type": "INTRO_BROLL", "lyric": "", "note": "instrumental intro — lunar cargo depot establishing"},
+    {"scene": 1,  "start": 10.0,  "end": 20.0,  "type": "CLOSEUP", "lyric": "Nobody Northwest, we traced the cold", "note": "verse1 close-up lip-sync, NO text"},
+    {"scene": 2,  "start": 20.0,  "end": 30.0,  "type": "THEME",   "lyric": "", "note": "lunar city + paper map world"},
+    {"scene": 3,  "start": 30.0,  "end": 40.0,  "type": "CLOSEUP", "lyric": "Concrete dreams in the middle of the frame", "note": "verse1 close-up lip-sync, NO text"},
+    {"scene": 4,  "start": 40.0,  "end": 50.0,  "type": "THEME",   "lyric": "", "note": "autonomous streets world"},
+    {"scene": 5,  "start": 50.0,  "end": 60.0,  "type": "CLOSEUP", "lyric": "Or in the hole at the return bell's ring", "note": "verse1 close-up lip-sync, NO text"},
+    {"scene": 6,  "start": 60.0,  "end": 70.0,  "type": "THEME",   "lyric": "", "note": "cargo conveyor world"},
+    {"scene": 7,  "start": 70.0,  "end": 80.0,  "type": "CLOSEUP", "lyric": "Let it roll, thanks moon city", "note": "chorus close-up lip-sync, NO text"},
+    {"scene": 8,  "start": 80.0,  "end": 90.0,  "type": "THEME",   "lyric": "", "note": "moon city montage"},
+    {"scene": 9,  "start": 90.0,  "end": 100.0, "type": "THEME",   "lyric": "", "note": "cargo route world"},
+    {"scene": 10, "start": 100.0, "end": 110.0, "type": "CLOSEUP", "lyric": "Mining what the nights are, ice and metal", "note": "verse2 close-up lip-sync, NO text"},
+    {"scene": 11, "start": 110.0, "end": 120.0, "type": "THEME",   "lyric": "", "note": "mountainside mine world"},
+    {"scene": 12, "start": 120.0, "end": 130.0, "type": "CLOSEUP", "lyric": "Check the shield, check the flight", "note": "chorus close-up lip-sync, NO text"},
+    {"scene": 13, "start": 130.0, "end": 140.0, "type": "THEME",   "lyric": "", "note": "cargo ship world"},
+    {"scene": 14, "start": 140.0, "end": 150.0, "type": "CLOSEUP", "lyric": "Let it roll, send it from the basin", "note": "bridge close-up lip-sync, NO text"},
+    {"scene": 15, "start": 150.0, "end": 160.0, "type": "THEME",   "lyric": "", "note": "basin world"},
+    {"scene": 16, "start": 160.0, "end": 170.0, "type": "CLOSEUP", "lyric": "Cargo North by, let it roll", "note": "outro close-up lip-sync, NO text"},
+    {"scene": 17, "start": 170.0, "end": 180.0, "type": "THEME",   "lyric": "", "note": "lunar horizon world"},
+    {"scene": 18, "start": 180.0, "end": 190.0, "type": "CLOSEUP", "lyric": "let it roll, let it roll", "note": "ending close-up lip-sync, NO text"},
+    {"scene": 19, "start": 190.0, "end": 200.0, "type": "THEME",   "lyric": "", "note": "cargo ships world"},
+    {"scene": 20, "start": 200.0, "end": 213.6, "type": "OUTRO",   "lyric": "", "note": "lunar horizon drift, no text"}
+  ]
+}

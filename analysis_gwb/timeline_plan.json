@@ -1,0 +1,18 @@
+{
+  "song": "Gifted With The Blocks.mp3",
+  "duration": 94.992,
+  "character": "DJ Gifted Prophet — a young man with olive skin, Ray-Ban nerdy glasses, a goatee, wearing a black baseball cap with white letters 'LL' on the front. He is the DJ/performer.",
+  "concept": "West Coast DJ-culture music video. DJ Gifted Prophet (the described young man) is the star — behind the turntables, crate-digging, dancing, commanding the blocks. Scenes themed by the lyrics: profit/blocks, cruise flow, laptop/scribe on the chain, Compton to Koreatown, basement crates + MPC, west side ride. A SMALL percentage of performance scenes get a slow-mo dance/DJ-cut pass synced to the beat for a real, cinematic feel. No on-screen text (lyrics carried by visuals).",
+  "scenes": [
+    {"scene": 0,  "start": 0.0,   "end": 10.0,  "type": "PERF", "slowmo": false, "lyric": "give the profit, profit, ride with me, low face", "note": "DJ Gifted Prophet at the decks, hands on the mixer, head nodding to the beat"},
+    {"scene": 1,  "start": 10.0,  "end": 20.0,  "type": "THEME", "slowmo": false, "lyric": "sun vibes down, cruise flow, gold, laptop scribe on the chain", "note": "West Coast street cruise, lowrider/gold hour, character riding"},
+    {"scene": 2,  "start": 20.0,  "end": 30.0,  "type": "PERF", "slowmo": true,  "lyric": "purpose spec'd, alley wall spell, make the whole world turn DJ", "note": "SLOW-MO: character dancing / turntable scratch, beat-synced, hands moving slow"},
+    {"scene": 3,  "start": 30.0,  "end": 40.0,  "type": "THEME", "slowmo": false, "lyric": "carving ledges, every digit, every stat, west side never stop", "note": "graffiti ledges + digital overlay of stats, West Side"},
+    {"scene": 4,  "start": 40.0,  "end": 50.0,  "type": "PERF", "slowmo": false, "lyric": "basement full of crates, dust on sleeves, MPC, tag in the mask", "note": "character in a basement crate room, flipping records, MPC beat"},
+    {"scene": 5,  "start": 50.0,  "end": 60.0,  "type": "THEME", "slowmo": false, "lyric": "Compton to Koreatown, wallet in the vision, underground cables", "note": "LA map montage Compton→Koreatown, underground cables"},
+    {"scene": 6,  "start": 60.0,  "end": 70.0,  "type": "PERF", "slowmo": true,  "lyric": "give the profit on the blocks, carving ledges, he to scribe", "note": "SLOW-MO: character dancing in the street, crowd vibe, beat-synced slow"},
+    {"scene": 7,  "start": 70.0,  "end": 80.0,  "type": "THEME", "slowmo": false, "lyric": "basement crates, future on the screen, spin that slowly", "note": "character at decks spinning vinyl, screen glow"},
+    {"scene": 8,  "start": 80.0,  "end": 90.0,  "type": "PERF", "slowmo": false, "lyric": "hands to the sky, praise the DJ, give the profit", "note": "character arms up, DJ triumph pose, crowd silhouettes"},
+    {"scene": 9,  "start": 90.0,  "end": 95.0,  "type": "OUTRO", "slowmo": false, "lyric": "DJ, give the profit", "note": "character final pose at the decks, fade, no text"}
+  ]
+}
