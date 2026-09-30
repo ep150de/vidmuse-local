@@ -212,6 +212,12 @@ def _hydrate_director(director: HermesDirector, session: Dict[str, Any]) -> None
     if lyrics and isinstance(director.audio_analysis, dict):
         if not (director.audio_analysis.get("lyrics") or "").strip():
             director.audio_analysis["lyrics"] = lyrics
+    if session.get("creative_direction"):
+        director.creative_direction = session["creative_direction"]
+    if session.get("timeline_plan"):
+        director.studio_timeline = list(session["timeline_plan"])
+    if session.get("final_video_path"):
+        director.final_video_path = session["final_video_path"]
 
 
 def _write_project_manifest(session_id: str, session: Dict[str, Any]) -> None:
@@ -246,6 +252,7 @@ def _write_project_manifest(session_id: str, session: Dict[str, Any]) -> None:
         "visual_bible": session.get("visual_bible"),
         "concepts": session.get("concepts") or [],
         "storyboard": session.get("storyboard") or [],
+        "timeline_plan": session.get("timeline_plan") or [],
         "technical_qc": session.get("technical_qc"),
     }
     (session_dir / "project.json").write_text(
@@ -1163,6 +1170,184 @@ async def edit_final(request: dict):
         "project_mode": session.get("project_mode") or "mtv",
         "technical_qc": technical_qc,
     }
+
+
+@app.get("/api/session/{session_id}/asset/studio/{filename}")
+async def get_studio_asset(session_id: str, filename: str):
+    path = OUTPUT_DIR / session_id / "studio" / filename
+    if not path.is_file():
+        raise HTTPException(404, "Studio asset not found")
+    return FileResponse(path)
+
+
+@app.post("/api/studio/plan")
+async def studio_plan(request: dict):
+    """Build H3-only lyric scene plan for the studio timeline."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session or not session.get("audio_path"):
+        return {"error": "Upload an MP3 first"}
+    director = _get_director(session_id)
+    _hydrate_director(director, session)
+    direction = str(
+        request.get("direction")
+        or session.get("creative_direction")
+        or session.get("concept_prompt")
+        or ""
+    ).strip()
+    if direction:
+        session["creative_direction"] = direction[:2000]
+        director.creative_direction = session["creative_direction"]
+    clip_seconds = request.get("clip_seconds")
+    try:
+        timeline = director.build_studio_timeline(
+            direction,
+            clip_seconds=float(clip_seconds) if clip_seconds is not None else None,
+        )
+    except Exception as exc:
+        LOG.exception("studio plan failed")
+        return {"error": str(exc)}
+    session["timeline_plan"] = timeline
+    session["status"] = "studio_planned"
+    session["video_backend"] = "minimax-h3"
+    director.video_backend = "minimax-h3"
+    _write_project_manifest(session_id, session)
+    return {
+        "session_id": session_id,
+        "timeline": timeline,
+        "duration": (session.get("audio_analysis") or {}).get("duration"),
+        "scene_count": len(timeline),
+    }
+
+
+@app.post("/api/studio/render")
+async def studio_render(request: dict):
+    """Render all MiniMax H3 scenes and mux the original MP3."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session or not session.get("audio_path"):
+        return {"error": "Upload an MP3 first"}
+    director = _get_director(session_id)
+    _hydrate_director(director, session)
+    if not director.studio_timeline:
+        direction = str(session.get("creative_direction") or "").strip()
+        director.build_studio_timeline(direction)
+        session["timeline_plan"] = director.studio_timeline
+    session["status"] = "studio_rendering"
+    session["video_backend"] = "minimax-h3"
+    director.video_backend = "minimax-h3"
+    indices = request.get("indices")
+    if isinstance(indices, list):
+        indices = [int(i) for i in indices]
+    else:
+        indices = None
+    try:
+        result = await director.render_studio_timeline(
+            indices=indices,
+            assemble=bool(request.get("assemble", True)),
+        )
+    except Exception as exc:
+        LOG.exception("studio render failed")
+        session["status"] = "error"
+        return {"error": str(exc)}
+    session["timeline_plan"] = director.studio_timeline
+    if result.get("final_video_path"):
+        session["final_video_path"] = result["final_video_path"]
+        session["status"] = "done"
+    else:
+        session["status"] = "studio_partial"
+    _write_project_manifest(session_id, session)
+    download = (
+        f"/api/download/{session_id}" if session.get("final_video_path") else None
+    )
+    return {
+        "session_id": session_id,
+        "timeline": director.studio_timeline,
+        "final_video_path": result.get("final_video_path"),
+        "download_url": download,
+        "cancelled": result.get("cancelled"),
+        "status": session["status"],
+    }
+
+
+@app.post("/api/studio/regenerate")
+async def studio_regenerate(request: dict):
+    """Re-render one studio scene with MiniMax H3 and optionally reassemble."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session or not session.get("audio_path"):
+        return {"error": "Upload an MP3 first"}
+    director = _get_director(session_id)
+    _hydrate_director(director, session)
+    if not director.studio_timeline:
+        return {"error": "No studio timeline"}
+    try:
+        index = int(request.get("index"))
+    except (TypeError, ValueError):
+        return {"error": "index required"}
+    prompt_override = str(request.get("prompt") or "").strip()
+    if prompt_override and 0 <= index < len(director.studio_timeline):
+        director.studio_timeline[index]["prompt"] = prompt_override[:2000]
+    try:
+        scene = await director.render_studio_scene(index)
+    except Exception as exc:
+        LOG.exception("studio regenerate failed")
+        return {"error": str(exc)}
+    session["timeline_plan"] = director.studio_timeline
+    final_path = None
+    if request.get("assemble", True):
+        ready = [
+            s
+            for s in director.studio_timeline
+            if s.get("status") == "ready" and s.get("video_path")
+        ]
+        if ready:
+            director.storyboard = [
+                {
+                    "id": s["id"],
+                    "timestamp": s["start"],
+                    "duration": s["duration"],
+                    "target_duration": s["duration"],
+                    "video_path": s["video_path"],
+                    "shot_type": "avatar" if s.get("type") == "PERF" else "cinematic",
+                    "fill_mode": "freeze",
+                }
+                for s in ready
+            ]
+            final_path = await director.assemble_final_video(
+                video_clips=[
+                    {
+                        "path": s["video_path"],
+                        "duration": s["duration"],
+                        "fill_mode": "freeze",
+                    }
+                    for s in ready
+                ],
+                audio_path=session["audio_path"],
+            )
+            session["final_video_path"] = final_path
+            session["status"] = "done"
+    _write_project_manifest(session_id, session)
+    return {
+        "session_id": session_id,
+        "scene": scene,
+        "timeline": director.studio_timeline,
+        "final_video_path": final_path or session.get("final_video_path"),
+        "download_url": (
+            f"/api/download/{session_id}" if session.get("final_video_path") else None
+        ),
+    }
+
+
+@app.post("/api/studio/cancel")
+async def studio_cancel(request: dict):
+    session_id = request.get("session_id")
+    if not session_id:
+        return {"error": "session_id required"}
+    director = active_directors.get(session_id)
+    if director:
+        director.request_studio_cancel()
+    return {"session_id": session_id, "status": "cancel_requested"}
 
 
 @app.get("/api/download/{session_id}")

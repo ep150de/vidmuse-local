@@ -59,6 +59,7 @@ _DEFAULT_INFINITETALK_AUDIO_ENC = "wav2vec2_large_english_fp16.safetensors"
 # MiniMax H3 Reference-to-Video (open weights; local ComfyUI ≥ 0.30)
 # R2V uses ref2va weights — not the fl2va I2V/T2V set.
 _DEFAULT_H3_UNET = "minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+_DEFAULT_H3_FL2VA_UNET = "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
 _DEFAULT_H3_CLIP = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 _DEFAULT_H3_VIDEO_VAE = "minimax_h3_video_vae_fp16.safetensors"
 _DEFAULT_H3_AUDIO_VAE = "minimax_h3_audio_vae_fp32.safetensors"
@@ -1038,7 +1039,7 @@ class ComfyUIClient:
 
     def _build_minimax_h3_r2v_workflow(
         self,
-        image_name: str,
+        image_name: Optional[str],
         audio_name: str,
         prompt: str,
         num_frames: int = 124,
@@ -1052,6 +1053,7 @@ class ComfyUIClient:
         Uses ``MiniMaxH3ReferenceToVideo`` with flat dotted sockets
         (``ref_images.ref_image_0``, ``ref_audios.ref_audio_0``) — nested dicts are
         ignored by Comfy ``/prompt``. Prompt tags are ``<Picture 1>`` / ``<Audio 1>``.
+        ``image_name`` may be omitted for prompt+audio studio shots (audio-only R2V).
         CreateVideo muxes the **user** audio slice (H3 stereo is discarded).
         Works on local ComfyUI ≥ 0.30 and Comfy Cloud with the same graph.
         """
@@ -1086,19 +1088,25 @@ class ComfyUIClient:
         if use_lightning:
             steps = int(os.getenv("COMFY_H3_LIGHTNING_STEPS", "4"))
 
-        # Official R2V prompts address refs with 1-based Picture/Audio tags
+        has_image = bool(image_name)
         tagged = prompt.strip()
-        if "<Picture 1>" not in tagged and "<picture 1>" not in tagged.lower():
-            tagged = (
-                f"<Picture 1> is the performer identity. "
-                f"They sing to camera matching <Audio 1> with accurate lip sync. "
-                f"{tagged}"
-            )
-        elif "<Audio 1>" not in tagged and "<audio 1>" not in tagged.lower():
-            tagged = f"{tagged} Match lip sync and performance energy to <Audio 1>."
+        if has_image:
+            if "<Picture 1>" not in tagged and "<picture 1>" not in tagged.lower():
+                tagged = (
+                    f"<Picture 1> is the performer identity. "
+                    f"They sing to camera matching <Audio 1> with accurate lip sync. "
+                    f"{tagged}"
+                )
+            elif "<Audio 1>" not in tagged and "<audio 1>" not in tagged.lower():
+                tagged = f"{tagged} Match lip sync and performance energy to <Audio 1>."
+        else:
+            if "<Audio 1>" not in tagged and "<audio 1>" not in tagged.lower():
+                tagged = (
+                    f"{tagged} Match performance timing, energy, and lip sync to <Audio 1>. "
+                    "NO text, NO captions, NO letters, NO watermark."
+                )
 
         workflow: Dict[str, Any] = {
-            "1": {"inputs": {"image": image_name}, "class_type": "LoadImage"},
             "2": {"inputs": {"audio": audio_name}, "class_type": "LoadAudio"},
             "10": {
                 "inputs": {"unet_name": unet, "weight_dtype": weight_dtype},
@@ -1121,6 +1129,8 @@ class ComfyUIClient:
                 "class_type": "VAELoader",
             },
         }
+        if has_image:
+            workflow["1"] = {"inputs": {"image": image_name}, "class_type": "LoadImage"}
 
         model_ref: Any = ["10", 0]
         if use_lightning:
@@ -1145,15 +1155,19 @@ class ComfyUIClient:
             "length": length,
             "ref_image_size": ref_image_size,
             # Flat dotted keys required for growable slots on /prompt
-            "ref_images.ref_image_0": ["1", 0],
             "ref_audios.ref_audio_0": ["2", 0],
         }
+        if has_image:
+            r2v_inputs["ref_images.ref_image_0"] = ["1", 0]
         if previous_image_name:
             workflow["3"] = {
                 "inputs": {"image": previous_image_name},
                 "class_type": "LoadImage",
             }
-            r2v_inputs["ref_images.ref_image_1"] = ["3", 0]
+            r2v_inputs["ref_images.ref_image_1" if has_image else "ref_images.ref_image_0"] = [
+                "3",
+                0,
+            ]
 
         workflow["20"] = {
             "inputs": r2v_inputs,
@@ -1219,6 +1233,134 @@ class ComfyUIClient:
                 },
             }
         )
+        return workflow
+
+    def _build_minimax_h3_t2v_workflow(
+        self,
+        audio_name: str,
+        prompt: str,
+        num_frames: int = 124,
+        seed: Optional[int] = None,
+        width: int = 768,
+        height: int = 448,
+    ) -> Dict[str, Any]:
+        """MiniMax H3 text-to-video (fl2va) with user audio muxed in CreateVideo.
+
+        Uses ``MiniMaxH3ImageToVideo`` with no first/last frame so the node runs
+        from the prompt alone. Song slice is muxed for preview; final assembly
+        still replaces with the master MP3.
+        """
+        if not audio_name:
+            raise ValueError("MiniMax H3 T2V still requires an audio slice for mux")
+        if seed is None:
+            seed = int(time.time()) % (2**32)
+
+        length = _h3_align_frames(num_frames)
+        length = min(length, int(os.getenv("COMFY_H3_MAX_FRAMES", "362")))
+        length = _h3_align_frames(length)
+        width = max(64, (int(width) // 32) * 32)
+        height = max(64, (int(height) // 32) * 32)
+
+        unet = os.getenv("COMFY_H3_FL2VA_UNET", _DEFAULT_H3_FL2VA_UNET)
+        clip = os.getenv("COMFY_H3_CLIP", _DEFAULT_H3_CLIP)
+        video_vae = os.getenv("COMFY_H3_VIDEO_VAE", _DEFAULT_H3_VIDEO_VAE)
+        audio_vae = os.getenv("COMFY_H3_AUDIO_VAE", _DEFAULT_H3_AUDIO_VAE)
+        weight_dtype = os.getenv("COMFY_H3_WEIGHT_DTYPE", "default")
+        fps = float(os.getenv("COMFY_H3_FPS", "24"))
+        steps = int(os.getenv("COMFY_H3_STEPS", "20"))
+        sampler_name = os.getenv("COMFY_H3_SAMPLER", "res_multistep")
+        scheduler = os.getenv("COMFY_H3_SCHEDULER", "simple")
+
+        tagged = prompt.strip()
+        if "NO text" not in tagged and "no text" not in tagged.lower():
+            tagged = f"{tagged} NO text, NO captions, NO letters, NO watermark."
+
+        workflow: Dict[str, Any] = {
+            "2": {"inputs": {"audio": audio_name}, "class_type": "LoadAudio"},
+            "10": {
+                "inputs": {"unet_name": unet, "weight_dtype": weight_dtype},
+                "class_type": "UNETLoader",
+            },
+            "11": {
+                "inputs": {
+                    "clip_name": clip,
+                    "type": "minimax",
+                    "device": "default",
+                },
+                "class_type": "CLIPLoader",
+            },
+            "12": {
+                "inputs": {"vae_name": video_vae},
+                "class_type": "VAELoader",
+            },
+            "13": {
+                "inputs": {"vae_name": audio_vae},
+                "class_type": "VAELoader",
+            },
+            "20": {
+                "inputs": {
+                    "clip": ["11", 0],
+                    "vae": ["12", 0],
+                    "prompt": tagged,
+                    "width": width,
+                    "height": height,
+                    "length": length,
+                },
+                "class_type": "MiniMaxH3ImageToVideo",
+            },
+            "30": {"inputs": {"noise_seed": seed}, "class_type": "RandomNoise"},
+            "31": {
+                "inputs": {"sampler_name": sampler_name},
+                "class_type": "KSamplerSelect",
+            },
+            "32": {
+                "inputs": {
+                    "model": ["10", 0],
+                    "scheduler": scheduler,
+                    "steps": steps,
+                    "denoise": 1.0,
+                },
+                "class_type": "BasicScheduler",
+            },
+            "33": {
+                "inputs": {
+                    "model": ["10", 0],
+                    "conditioning": ["20", 0],
+                },
+                "class_type": "BasicGuider",
+            },
+            "34": {
+                "inputs": {
+                    "noise": ["30", 0],
+                    "guider": ["33", 0],
+                    "sampler": ["31", 0],
+                    "sigmas": ["32", 0],
+                    "latent_image": ["20", 1],
+                },
+                "class_type": "SamplerCustomAdvanced",
+            },
+            "40": {
+                "inputs": {"samples": ["34", 0], "vae": ["12", 0]},
+                "class_type": "VAEDecode",
+            },
+            "50": {
+                "inputs": {
+                    "images": ["40", 0],
+                    "fps": fps,
+                    "audio": ["2", 0],
+                },
+                "class_type": "CreateVideo",
+            },
+            "51": {
+                "inputs": {
+                    "video": ["50", 0],
+                    "filename_prefix": "vidmuse_h3_t2v",
+                    "format": "mp4",
+                    "codec": "h264",
+                },
+                "class_type": "SaveVideo",
+            },
+        }
         return workflow
 
     def _build_infinitetalk_workflow(
@@ -1391,7 +1533,7 @@ class ComfyUIClient:
 
     async def generate_video_i2v(
         self,
-        image_path: str,
+        image_path: Optional[str],
         prompt: str,
         num_frames: int = 49,
         seed: Optional[int] = None,
@@ -1402,16 +1544,35 @@ class ComfyUIClient:
         backend: Optional[str] = None,
         previous_frames_path: Optional[str] = None,
     ) -> Optional[str]:
-        """Generate image+audio→video via native ComfyUI backends."""
+        """Generate image+audio→video via native ComfyUI backends.
+
+        MiniMax H3 also accepts ``image_path=None`` (prompt + audio only).
+        """
         if not audio_path or not Path(audio_path).is_file():
             print("[ComfyUI] image+audio video requires a local audio_path")
             return None
 
         backend = (backend or os.getenv("COMFY_VIDEO_BACKEND") or "minimax-h3").strip().lower()
+        h3_backends = (
+            "minimax-h3",
+            "minimax_h3",
+            "h3",
+            "minimax",
+            "minimax-h3-t2v",
+            "h3-t2v",
+        )
+        if not image_path and backend not in h3_backends:
+            print("[ComfyUI] image_path required for non-H3 backends")
+            return None
+
         headers = self._headers()
         async with aiohttp.ClientSession(headers=headers) as session:
-            image_name = await self._upload_input_file(session, image_path, "image")
-            if not image_name:
+            image_name = None
+            if image_path and Path(image_path).is_file():
+                image_name = await self._upload_input_file(session, image_path, "image")
+                if not image_name:
+                    return None
+            elif backend not in h3_backends:
                 return None
             audio_name = await self._upload_input_file(session, audio_path, "audio")
             if not audio_name:
@@ -1433,7 +1594,6 @@ class ComfyUIClient:
             frames = min(frames, int(os.getenv("COMFY_INFINITETALK_MAX_FRAMES", "81")))
             if (frames - 1) % 4 != 0:
                 frames = ((frames - 1) // 4) * 4 + 1
-            # Face/head performance default: portrait 480×832 unless landscape requested
             out_w, out_h = 480, 832
             if width >= height and width >= 640:
                 out_w, out_h = 832, 480
@@ -1452,7 +1612,7 @@ class ComfyUIClient:
                 height=out_h,
                 previous_frames_name=prev_name,
             )
-        elif backend in ("minimax-h3", "minimax_h3", "h3", "minimax"):
+        elif backend in h3_backends:
             fps = float(os.getenv("COMFY_H3_FPS", "24"))
             frames = num_frames
             if duration is not None:
@@ -1460,26 +1620,48 @@ class ComfyUIClient:
             frames = _h3_align_frames(frames)
             frames = min(frames, int(os.getenv("COMFY_H3_MAX_FRAMES", "362")))
             frames = _h3_align_frames(frames)
-            # Native H3 canvas: 768 short edge @ ~16:9 (0.4 MP preview-friendly default)
             out_w = int(os.getenv("COMFY_H3_WIDTH", str(width if width >= 640 else 768)))
             out_h = int(os.getenv("COMFY_H3_HEIGHT", str(height if height >= 360 else 448)))
             if width < height:
                 out_w = int(os.getenv("COMFY_H3_WIDTH", "448"))
                 out_h = int(os.getenv("COMFY_H3_HEIGHT", "768"))
-            h3_prompt = (
-                f"{prompt}. <Picture 1> sings to camera matching <Audio 1> with "
-                f"accurate lip sync, expressive face, consistent identity."
+            prompt_mode = (os.getenv("COMFY_H3_PROMPT_MODE") or "r2v").strip().lower()
+            force_t2v = backend in ("minimax-h3-t2v", "h3-t2v") or (
+                not image_name and prompt_mode in ("t2v", "fl2va", "image")
             )
-            workflow = self._build_minimax_h3_r2v_workflow(
-                image_name=image_name,
-                audio_name=audio_name,
-                prompt=h3_prompt,
-                num_frames=frames,
-                seed=seed,
-                width=out_w,
-                height=out_h,
-                previous_image_name=prev_name,
-            )
+            if force_t2v and not image_name:
+                h3_prompt = (
+                    f"{prompt}. Cinematic music video, natural motion, "
+                    f"NO text, NO captions, NO letters."
+                )
+                workflow = self._build_minimax_h3_t2v_workflow(
+                    audio_name=audio_name,
+                    prompt=h3_prompt,
+                    num_frames=frames,
+                    seed=seed,
+                    width=out_w,
+                    height=out_h,
+                )
+            else:
+                h3_prompt = (
+                    f"{prompt}. "
+                    + (
+                        "<Picture 1> sings to camera matching <Audio 1> with "
+                        "accurate lip sync, expressive face, consistent identity."
+                        if image_name
+                        else "Match timing and performance energy to <Audio 1>."
+                    )
+                )
+                workflow = self._build_minimax_h3_r2v_workflow(
+                    image_name=image_name,
+                    audio_name=audio_name,
+                    prompt=h3_prompt,
+                    num_frames=frames,
+                    seed=seed,
+                    width=out_w,
+                    height=out_h,
+                    previous_image_name=prev_name,
+                )
         elif backend in ("humo", "wan", "wan-humo"):
             fps = float(os.getenv("COMFY_HUMO_FPS", "25"))
             frames = num_frames
@@ -1523,8 +1705,7 @@ class ComfyUIClient:
             )
 
         path = await self._dispatch_workflow(workflow, wait_timeout=1800)
-        # Soft-fallback: H3 → InfiniteTalk → HuMo; others → HuMo
-        if not path and backend in ("minimax-h3", "minimax_h3", "h3", "minimax"):
+        if not path and backend in h3_backends and image_name:
             print("[ComfyUI] MiniMax H3 failed — falling back to InfiniteTalk")
             fps = float(os.getenv("COMFY_INFINITETALK_FPS", "25"))
             frames = max(5, int(round(float(duration or 3.5) * fps)))
@@ -1542,7 +1723,7 @@ class ComfyUIClient:
                 previous_frames_name=prev_name,
             )
             path = await self._dispatch_workflow(workflow, wait_timeout=1200)
-        if not path and backend not in ("humo", "wan", "wan-humo"):
+        if not path and backend not in ("humo", "wan", "wan-humo") and image_name:
             print(f"[ComfyUI] {backend} failed — falling back to HuMo lip-sync")
             fps = float(os.getenv("COMFY_HUMO_FPS", "25"))
             frames = max(9, int(round(float(duration or 2.0) * fps)))

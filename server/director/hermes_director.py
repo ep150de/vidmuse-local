@@ -84,6 +84,8 @@ class HermesDirector:
         ).strip().lower()
         self._video_seed_base: Optional[int] = None
         self.final_video_path: Optional[str] = None
+        self.studio_timeline: List[Dict[str, Any]] = []
+        self.creative_direction: str = ""
 
         # Progress tracking
         self._progress_callback: Optional[ProgressCallback] = None
@@ -92,6 +94,7 @@ class HermesDirector:
         self._current_phase = "idle"
         self._current_progress = 0
         self._status = "idle"
+        self._studio_cancel = False
 
     def configure_comfy(self, backend: str, url: Optional[str] = None) -> None:
         """Switch this session between cloud, local, and AI Playground Comfy."""
@@ -1866,3 +1869,283 @@ Respond with ONLY this JSON:
                 "concepts": concepts,
                 "selected_concept_index": concept_index if concept_index is not None else 0,
             }
+
+    # ── Studio H3-only music video path ───────────────────────────────
+
+    def request_studio_cancel(self) -> None:
+        self._studio_cancel = True
+
+    def clear_studio_cancel(self) -> None:
+        self._studio_cancel = False
+
+    def build_studio_timeline(
+        self,
+        direction: str,
+        *,
+        clip_seconds: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """Build lyric-driven scene plan covering the full song (Hermes skill recipe)."""
+        from server.lyrics import lyrics_in_window
+
+        analysis = self.audio_analysis or {}
+        duration = float(analysis.get("duration") or 0)
+        if duration <= 0 and getattr(self, "audio_path", None):
+            try:
+                duration = VideoEditor(self.audio_path).audio_duration()
+            except Exception:
+                duration = 0.0
+        if duration <= 0:
+            raise ValueError("Song duration unknown — upload audio first")
+
+        clip_secs = float(
+            clip_seconds
+            if clip_seconds is not None
+            else os.getenv("COMFY_H3_CLIP_SECONDS", "10")
+        )
+        clip_secs = min(max(5.0, clip_secs), 14.0)
+
+        cues = list(analysis.get("lyrics_cues") or [])
+        direction = (direction or self.creative_direction or "").strip()
+        self.creative_direction = direction
+
+        singer = self.singer_profile or {}
+        char_bits = [
+            singer.get("name"),
+            singer.get("presentation"),
+            singer.get("age_range"),
+            singer.get("look"),
+            singer.get("framing") or "close-up on face and head",
+        ]
+        character = ", ".join(str(x).strip() for x in char_bits if x and str(x).strip())
+        if not character:
+            character = "the lead performer"
+
+        has_still = bool(
+            (self.reference_images and Path(self.reference_images[0]).is_file())
+            or (self.identity_sheet_path and Path(self.identity_sheet_path).is_file())
+        )
+
+        scenes: List[Dict[str, Any]] = []
+        t = 0.0
+        idx = 0
+        while t < duration - 0.4:
+            end = min(duration, t + clip_secs)
+            # Prefer ending on a cue boundary when nearby
+            for cue in cues:
+                cs = float(cue.get("start") or 0)
+                ce = float(cue.get("end") or 0)
+                if t < ce <= end + 1.5 and ce - t >= 4.0:
+                    end = min(duration, ce)
+                    break
+            if end - t < 3.0 and scenes:
+                scenes[-1]["end"] = duration
+                scenes[-1]["duration"] = duration - float(scenes[-1]["start"])
+                break
+
+            lyric = lyrics_in_window(cues, t, end)
+            if not lyric:
+                # Fall back to proportional lines from plain lyrics text
+                plain = (analysis.get("lyrics") or "").strip()
+                if plain:
+                    lines = [ln.strip() for ln in plain.splitlines() if ln.strip()]
+                    if lines:
+                        li = min(idx, len(lines) - 1)
+                        lyric = lines[li]
+
+            stype = "PERF" if idx % 2 == 0 else "THEME"
+            if t < 8.0 and idx == 0:
+                stype = "PERF"
+            if end >= duration - 0.5:
+                stype = "OUTRO" if idx > 0 else stype
+
+            no_txt = "NO text, NO captions, NO letters, NO watermark"
+            look = direction or "cinematic music video, high production value"
+            if stype == "PERF":
+                prompt = (
+                    f"{character} performing: {lyric or 'singing'}. "
+                    f"Singing to camera, expressive face, accurate lip sync. {look}. {no_txt}"
+                )
+            elif stype == "OUTRO":
+                prompt = (
+                    f"{character} in a final hold, {look}. Soft ending energy. {no_txt}"
+                )
+            else:
+                prompt = (
+                    f"{character} in a thematic scene: {lyric or 'instrumental mood'}. "
+                    f"{look}. World and atmosphere shot. {no_txt}"
+                )
+
+            scenes.append(
+                {
+                    "id": f"scene_{idx:02d}",
+                    "index": idx,
+                    "start": round(t, 3),
+                    "end": round(end, 3),
+                    "duration": round(end - t, 3),
+                    "type": stype,
+                    "lyric": lyric or "",
+                    "prompt": prompt,
+                    "status": "queued",
+                    "video_path": None,
+                    "video_url": None,
+                    "has_still": has_still,
+                }
+            )
+            idx += 1
+            t = end
+
+        self.studio_timeline = scenes
+        self._emit_progress(
+            self.PHASE_VIDEO,
+            5,
+            f"Studio plan ready — {len(scenes)} MiniMax H3 scenes",
+        )
+        return scenes
+
+    async def render_studio_scene(self, index: int, *, seed: Optional[int] = None) -> Dict[str, Any]:
+        """Render one studio timeline scene with MiniMax H3 only."""
+        if not self.studio_timeline:
+            raise ValueError("No studio timeline — build a plan first")
+        if index < 0 or index >= len(self.studio_timeline):
+            raise IndexError(f"Scene index out of range: {index}")
+        if not getattr(self, "audio_path", None) or not Path(self.audio_path).is_file():
+            raise ValueError("No audio path on director")
+
+        scene = self.studio_timeline[index]
+        scene["status"] = "rendering"
+        start_t = float(scene["start"])
+        gen_secs = float(scene["duration"])
+        gen_secs = min(max(3.0, gen_secs), 14.5)
+
+        session_dir = self.output_dir / "studio"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        audio_slice = session_dir / f"audio_{index:02d}.wav"
+        self._slice_audio(
+            self.audio_path,
+            audio_slice,
+            start_t,
+            gen_secs,
+            sample_rate="44100",
+            channels="2",
+            normalize=False,
+        )
+
+        still: Optional[str] = None
+        if self.reference_images:
+            for p in self.reference_images:
+                if p and Path(p).is_file():
+                    still = p
+                    break
+        if not still and self.identity_sheet_path and Path(self.identity_sheet_path).is_file():
+            still = self.identity_sheet_path
+
+        fps = float(os.getenv("COMFY_H3_FPS", "24"))
+        raw_frames = max(5, int(round(gen_secs * fps)))
+        raw_frames = raw_frames + (5 - (raw_frames % 17)) % 17
+
+        if self._video_seed_base is None:
+            self._video_seed_base = int(time.time()) % (2**31)
+        use_seed = seed if seed is not None else (self._video_seed_base + index * 17)
+
+        self._emit_progress(
+            self.PHASE_VIDEO,
+            min(95, int(10 + (index / max(1, len(self.studio_timeline))) * 80)),
+            f"H3 scene {index + 1}/{len(self.studio_timeline)} · {scene.get('type')}",
+        )
+
+        try:
+            video_path = await self.comfyui.generate_video_i2v(
+                image_path=still,
+                prompt=scene.get("prompt") or self.creative_direction or "music video",
+                num_frames=raw_frames,
+                seed=use_seed,
+                audio_path=str(audio_slice),
+                duration=gen_secs,
+                width=768,
+                height=448,
+                backend="minimax-h3",
+            )
+        except Exception as exc:
+            LOG.warning("Studio H3 scene %d failed: %s", index, exc)
+            video_path = None
+
+        if not video_path or not Path(video_path).is_file():
+            scene["status"] = "failed"
+            return scene
+
+        dest = session_dir / f"scene_{index:02d}.mp4"
+        if Path(video_path).resolve() != dest.resolve():
+            shutil.copy(video_path, dest)
+        session_id = self.output_dir.name
+        scene["video_path"] = str(dest)
+        scene["video_url"] = f"/api/session/{session_id}/asset/studio/{dest.name}"
+        scene["status"] = "ready"
+        scene["has_still"] = bool(still)
+        return scene
+
+    async def render_studio_timeline(
+        self,
+        *,
+        indices: Optional[List[int]] = None,
+        assemble: bool = True,
+    ) -> Dict[str, Any]:
+        """Render all (or selected) studio scenes with MiniMax H3, then mux master MP3."""
+        self.clear_studio_cancel()
+        if not self.studio_timeline:
+            raise ValueError("No studio timeline")
+
+        targets = indices if indices is not None else list(range(len(self.studio_timeline)))
+        rendered: List[Dict[str, Any]] = []
+        for i, idx in enumerate(targets):
+            if self._studio_cancel:
+                break
+            scene = await self.render_studio_scene(idx)
+            rendered.append(scene)
+            self._emit_progress(
+                self.PHASE_VIDEO,
+                min(95, int(15 + ((i + 1) / max(1, len(targets))) * 75)),
+                f"Rendered {i + 1}/{len(targets)} H3 scenes",
+            )
+
+        final_path = None
+        if assemble and not self._studio_cancel:
+            ready = [
+                s
+                for s in self.studio_timeline
+                if s.get("status") == "ready" and s.get("video_path")
+            ]
+            if ready:
+                # Mirror onto storyboard so assemble_final_video can reuse specs
+                self.storyboard = [
+                    {
+                        "id": s["id"],
+                        "timestamp": s["start"],
+                        "duration": s["duration"],
+                        "target_duration": s["duration"],
+                        "video_path": s["video_path"],
+                        "shot_type": "avatar" if s.get("type") == "PERF" else "cinematic",
+                        "fill_mode": "freeze",
+                        "prompt": s.get("prompt"),
+                    }
+                    for s in ready
+                ]
+                final_path = await self.assemble_final_video(
+                    video_clips=[
+                        {
+                            "path": s["video_path"],
+                            "duration": s["duration"],
+                            "fill_mode": "freeze",
+                        }
+                        for s in ready
+                    ],
+                    audio_path=self.audio_path,
+                )
+                self.final_video_path = final_path
+
+        self._emit_progress(self.PHASE_ASSEMBLE, 100, "Studio render complete")
+        return {
+            "timeline": self.studio_timeline,
+            "rendered": rendered,
+            "final_video_path": final_path,
+            "cancelled": self._studio_cancel,
+        }

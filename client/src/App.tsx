@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { api } from "./api";
+import { StudioApp } from "./studio/StudioApp";
 import { UploadScreen, type UploadPayload } from "./components/UploadScreen";
 import { ChatInterface } from "./components/ChatInterface";
 import { ConceptSelector } from "./components/ConceptSelector";
@@ -11,7 +12,13 @@ import { Header } from "./components/Header";
 
 type Phase = "upload" | "chat" | "concepts" | "storyboard" | "video" | "final";
 
-export default function App() {
+/** Default experience is the media studio. Legacy wizard remains at ?wizard=1 */
+function useLegacyWizard(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("wizard") === "1";
+}
+
+function LegacyWizardApp() {
   const [phase, setPhase] = useState<Phase>("upload");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -20,7 +27,6 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loadingHint, setLoadingHint] = useState<string>("");
   const [technicalQc, setTechnicalQc] = useState<any>(null);
-
 
   useEffect(() => {
     api
@@ -94,7 +100,6 @@ export default function App() {
               : "\nTreat exact lyrics as the protagonist; reserve text-safe composition space.")
       );
 
-      // Fast path: with lyrics, go straight to concepts
       if (hasLyrics || payload.lyrics.trim()) {
         setPhase("concepts");
       } else {
@@ -177,19 +182,12 @@ export default function App() {
           </div>
         )}
 
-        {phase === "upload" && (
-          <UploadScreen onComplete={handleUploadComplete} />
-        )}
+        {phase === "upload" && <UploadScreen onComplete={handleUploadComplete} />}
 
-        {phase === "chat" && (
-          <ChatInterface onConceptsReady={handleConceptsReady} />
-        )}
+        {phase === "chat" && <ChatInterface onConceptsReady={handleConceptsReady} />}
 
         {phase === "concepts" && (
-          <ConceptSelector
-            onSelect={handleConceptSelected}
-            onError={setError}
-          />
+          <ConceptSelector onSelect={handleConceptSelected} onError={setError} />
         )}
 
         {phase === "storyboard" && (
@@ -201,86 +199,46 @@ export default function App() {
         )}
 
         {phase === "video" && (
-          <VideoPreview
-            onComplete={handleVideoComplete}
-            onError={setError}
-          />
+          <VideoPreview onComplete={handleVideoComplete} onError={setError} />
         )}
 
         {phase === "final" && (
-          <FinalOutput downloadUrl={api.getDownloadUrl()} technicalQc={technicalQc} />
+          <FinalOutput
+            technicalQc={technicalQc}
+            downloadUrl={api.getDownloadUrl()}
+          />
+        )}
+
+        {phase !== "upload" && phase !== "final" && (
+          <ProgressPanel progress={progress} />
         )}
       </main>
-
-      <ProgressPanel progress={progress} />
-      {/* silence unused sessionId warning in legacy flow */}
-      <span className="sr-only">{sessionId}</span>
     </div>
   );
 }
 
 function PhaseIndicator({ current }: { current: Phase }) {
-  const phases: { id: Phase; label: string }[] = [
-    { id: "upload", label: "Upload" },
-    { id: "chat", label: "Ideate" },
-    { id: "concepts", label: "Concepts" },
-    { id: "storyboard", label: "Storyboard" },
-    { id: "video", label: "Video" },
-    { id: "final", label: "Final" },
-  ];
-
-  const currentIndex = phases.findIndex((p) => p.id === current);
-
+  const phases: Phase[] = ["upload", "chat", "concepts", "storyboard", "video", "final"];
   return (
-    <nav
-      aria-label="Pipeline progress"
-      className="mb-8 animate-rise"
-    >
-      <ol className="flex items-center justify-center gap-1 sm:gap-2 flex-wrap">
-        {phases.map((phase, i) => {
-          const done = i < currentIndex;
-          const active = i === currentIndex;
-          return (
-            <li key={phase.id} className="flex items-center gap-1 sm:gap-2">
-              <div
-                className={`
-                  flex items-center gap-2 px-2 py-1.5
-                  ${active ? "phase-active" : ""}
-                `}
-              >
-                <span
-                  className={`
-                    w-8 h-8 rounded-lg flex items-center justify-center text-sm font-display font-bold
-                    transition-colors
-                    ${active
-                      ? "bg-gradient-to-br from-sky-300 to-sky-500 text-[#071018] shadow-[0_0_16px_rgba(56,189,248,0.28)]"
-                      : done
-                        ? "bg-sky-400/90 text-[#071018]"
-                        : "bg-[var(--surface-2)] text-[var(--muted)] border border-[var(--border)]"
-                    }
-                  `}
-                >
-                  {i + 1}
-                </span>
-                <span
-                  className={`hidden sm:inline text-[11px] uppercase tracking-[0.16em] ${
-                    active || done ? "text-[var(--ink)]" : "text-[var(--muted)]"
-                  }`}
-                >
-                  {phase.label}
-                </span>
-              </div>
-              {i < phases.length - 1 && (
-                <div
-                  className={`w-5 sm:w-8 h-px ${
-                    done ? "bg-gradient-to-r from-sky-400 to-sky-400/40" : "bg-[var(--border)]"
-                  }`}
-                />
-              )}
-            </li>
-          );
-        })}
-      </ol>
-    </nav>
+    <div className="flex flex-wrap gap-2 mb-6 text-xs">
+      {phases.map((p) => (
+        <span
+          key={p}
+          className={`px-2 py-1 rounded border ${
+            p === current
+              ? "border-[var(--accent)] text-[var(--ink)] phase-active"
+              : "border-[var(--border)] text-[var(--muted)]"
+          }`}
+        >
+          {p}
+        </span>
+      ))}
+    </div>
   );
+}
+
+export default function App() {
+  const legacy = useLegacyWizard();
+  if (legacy) return <LegacyWizardApp />;
+  return <StudioApp />;
 }

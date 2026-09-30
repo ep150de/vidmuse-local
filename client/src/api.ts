@@ -221,6 +221,68 @@ class VidMuseAPI {
     const res = await fetch(`${SERVER_URL}/api/health`);
     return parseJson(res);
   }
+
+  async studioPlan(payload: {
+    direction?: string;
+    clip_seconds?: number;
+  } = {}): Promise<any> {
+    if (!this.sessionId) throw new Error("No session");
+    const res = await fetch(`${SERVER_URL}/api/studio/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: this.sessionId, ...payload }),
+    });
+    return parseJson(res);
+  }
+
+  async studioRender(payload: {
+    indices?: number[];
+    assemble?: boolean;
+  } = {}): Promise<any> {
+    if (!this.sessionId) throw new Error("No session");
+    const res = await fetch(`${SERVER_URL}/api/studio/render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: this.sessionId,
+        assemble: true,
+        ...payload,
+      }),
+    });
+    return parseJson(res);
+  }
+
+  async studioRegenerate(payload: {
+    index: number;
+    prompt?: string;
+    assemble?: boolean;
+  }): Promise<any> {
+    if (!this.sessionId) throw new Error("No session");
+    const res = await fetch(`${SERVER_URL}/api/studio/regenerate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: this.sessionId,
+        assemble: true,
+        ...payload,
+      }),
+    });
+    return parseJson(res);
+  }
+
+  async studioCancel(): Promise<any> {
+    if (!this.sessionId) throw new Error("No session");
+    const res = await fetch(`${SERVER_URL}/api/studio/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: this.sessionId }),
+    });
+    return parseJson(res);
+  }
+
+  get session(): string | null {
+    return this.sessionId;
+  }
 }
 
 export const api = new VidMuseAPI();

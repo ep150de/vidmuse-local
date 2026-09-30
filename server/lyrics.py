@@ -48,7 +48,8 @@ def lyrics_in_window(
         return ""
     parts: List[str] = []
     for cue in cues:
-        if cue["end"] < start or cue["start"] > end:
+        # Half-open interval so adjacent scenes don't share boundary cues
+        if cue["end"] <= start or cue["start"] >= end:
             continue
         parts.append(str(cue["text"]))
     return " / ".join(parts)
