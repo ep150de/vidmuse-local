@@ -73,7 +73,7 @@ OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/tmp/vidmuse/outputs"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─── APP ────────────────────────────────────────────────────────────────
-app = FastAPI(title="VidMuse Local Server", version="2.0.0")
+app = FastAPI(title="SceneMux Server", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -199,6 +199,9 @@ def _hydrate_director(director: HermesDirector, session: Dict[str, Any]) -> None
     director.project_mode = session.get("project_mode") or "mtv"
     comfy_backend = session.get("comfy_backend")
     comfy_url = session.get("comfy_url")
+    if comfy_backend == "cloud":
+        comfy_url = COMFY_CLOUD_URL
+        session["comfy_url"] = COMFY_CLOUD_URL
     if comfy_backend and (
         director.comfy_backend != comfy_backend
         or (comfy_url and director.comfy_url != comfy_url.rstrip("/"))
@@ -208,6 +211,24 @@ def _hydrate_director(director: HermesDirector, session: Dict[str, Any]) -> None
         director.reference_images = list(session["reference_images"])
     if session.get("identity_sheet_path"):
         director.identity_sheet_path = session["identity_sheet_path"]
+    if session.get("timeline_plan"):
+        director.timeline_plan = session["timeline_plan"]
+    from server.pipeline import normalize_pipeline
+
+    lanes = normalize_pipeline(session, {})
+    director.configure_home_agent(
+        session.get("home_agent_url") or "",
+        session.get("home_agent_password")
+        or os.getenv("HOME_AGENT_PASSWORD")
+        or "",
+        use_stills=lanes["pipeline_stills"] == "home_agent",
+        use_video=lanes["pipeline_video"] == "home_agent",
+    )
+    director.configure_pipeline(
+        director=lanes["pipeline_director"],
+        stills=lanes["pipeline_stills"],
+        video=lanes["pipeline_video"],
+    )
     lyrics = (session.get("lyrics") or "").strip()
     if lyrics and isinstance(director.audio_analysis, dict):
         if not (director.audio_analysis.get("lyrics") or "").strip():
@@ -225,6 +246,13 @@ def _write_project_manifest(session_id: str, session: Dict[str, Any]) -> None:
         "comfy": {
             "backend": session.get("comfy_backend") or COMFYUI_BACKEND or "local",
             "url": session.get("comfy_url") or COMFYUI_URL,
+        },
+        "pipeline": {
+            "director": session.get("pipeline_director") or "cloud_llm",
+            "stills": session.get("pipeline_stills") or "comfy",
+            "video": session.get("pipeline_video") or "comfy_cloud",
+            "home_agent_url": session.get("home_agent_url") or "",
+            "hermes_url": session.get("hermes_url") or "",
         },
         "audio": {
             "path": session.get("audio_path"),
@@ -327,6 +355,111 @@ async def llm_status():
     status["available"] = await health_check_all()
     return status
 
+
+def _home_agent_http_status(exc: Exception) -> int:
+    code = getattr(exc, "code", "") or ""
+    if code == "unreachable":
+        return 503
+    if code == "auth":
+        return 401
+    return 400
+
+
+@app.post("/api/home-agent/diagnose")
+async def home_agent_diagnose(request: dict):
+    """TCP reachability probe for Home Agent local-web (no password)."""
+    from server.home_agent.client import HomeAgentClient, HomeAgentError
+
+    url = str(
+        request.get("url") or os.getenv("HOME_AGENT_URL") or ""
+    ).strip().rstrip("/")
+    if not url:
+        raise HTTPException(status_code=400, detail="Home Agent URL required")
+    client = HomeAgentClient(url, password="")
+    try:
+        return await client.diagnose()
+    except HomeAgentError as exc:
+        raise HTTPException(
+            status_code=_home_agent_http_status(exc), detail=str(exc)
+        ) from exc
+
+
+@app.post("/api/home-agent/test")
+async def home_agent_test(request: dict):
+    """Login-only probe for AI Playground Home Agent LAN local-web.
+
+    Does not affect Comfy Cloud / Local video backends.
+    """
+    from server.home_agent.client import HomeAgentClient, HomeAgentError
+
+    url = str(
+        request.get("url") or os.getenv("HOME_AGENT_URL") or ""
+    ).strip().rstrip("/")
+    password = str(
+        request.get("password") or os.getenv("HOME_AGENT_PASSWORD") or ""
+    ).strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Home Agent URL required")
+    if not password:
+        raise HTTPException(status_code=400, detail="Home Agent password required")
+    client = HomeAgentClient(url, password)
+    try:
+        return await client.test_connection()
+    except HomeAgentError as exc:
+        raise HTTPException(
+            status_code=_home_agent_http_status(exc), detail=str(exc)
+        ) from exc
+    except Exception as exc:
+        detail = str(exc).strip() or (
+            f"{type(exc).__name__}: cannot reach Home Agent at {url}"
+        )
+        raise HTTPException(status_code=503, detail=detail) from exc
+
+
+@app.post("/api/home-agent/job")
+async def home_agent_job(request: dict):
+    """Phase-2: send an agentic job envelope to Home Agent (optional media return)."""
+    from server.home_agent.client import HomeAgentClient, HomeAgentError
+    from server.home_agent.jobs import run_media_job
+
+    session_id = request.get("session_id")
+    url = str(
+        request.get("url") or os.getenv("HOME_AGENT_URL") or ""
+    ).strip().rstrip("/")
+    password = str(
+        request.get("password") or os.getenv("HOME_AGENT_PASSWORD") or ""
+    ).strip()
+    job_type = str(request.get("job_type") or "still").strip()[:80]
+    prompt = str(request.get("prompt") or "").strip()
+    if not url or not password:
+        raise HTTPException(
+            status_code=400, detail="Home Agent URL and password required"
+        )
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt required")
+
+    dest = OUTPUT_DIR / (session_id or "home_agent") / "home_agent"
+    client = HomeAgentClient(url, password)
+    try:
+        result = await run_media_job(
+            client,
+            job_type=job_type,
+            prompt=prompt,
+            dest_dir=dest,
+            extras=request.get("extras")
+            if isinstance(request.get("extras"), dict)
+            else None,
+        )
+        return {"session_id": session_id, **result}
+    except HomeAgentError as exc:
+        raise HTTPException(
+            status_code=_home_agent_http_status(exc), detail=str(exc)
+        ) from exc
+    except Exception as exc:
+        LOG.exception("Home Agent job failed")
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 # ─── PIPELINE START (MAIN ENDPOINT) ─────────────────────────────────────
 
 @app.post("/api/pipeline/start")
@@ -411,7 +544,7 @@ async def create_session():
         "storyboard": [],
         "concept_prompt": "",
         "singer_profile": {},
-        "video_backend": "infinitetalk",
+        "video_backend": "minimax-h3",
         "project_mode": "mtv",
         "performance_mix": "hybrid",
         "comfy_backend": COMFYUI_BACKEND,
@@ -438,21 +571,37 @@ async def configure_session(request: dict):
         }
     backend = str(request.get("video_backend") or session.get("video_backend") or "infinitetalk")
     backend = backend.strip().lower()
-    if backend not in ("infinitetalk", "ltx23", "humo"):
+    if backend not in (
+        "infinitetalk",
+        "ltx23",
+        "humo",
+        "minimax-h3",
+        "minimax_h3",
+        "h3",
+    ):
         backend = "infinitetalk"
+    if backend in ("minimax_h3", "h3"):
+        backend = "minimax-h3"
     session["video_backend"] = backend
 
     # Optional pasted lyrics (overrides / supplements Whisper later)
     pasted = str(request.get("lyrics") or "").strip()
     if pasted:
-        from server.lyrics import compact_lyrics
+        from server.lyrics import compact_lyrics, infer_line_cues
 
         lyrics = compact_lyrics(pasted, max_chars=8000)
         session["lyrics"] = lyrics
         analysis = session.get("audio_analysis") or {}
         analysis["lyrics"] = lyrics
         analysis["lyrics_source"] = "user"
-        analysis["lyrics_cues"] = analysis.get("lyrics_cues") or []
+        duration = float(analysis.get("duration") or 0)
+        existing_cues = analysis.get("lyrics_cues") or []
+        # Rebuild proportional cues when user pastes fresh lyrics without timings
+        if duration > 0 and (
+            not existing_cues
+            or analysis.get("lyrics_source") == "user"
+        ):
+            analysis["lyrics_cues"] = infer_line_cues(lyrics, duration)
         session["audio_analysis"] = analysis
 
     direction = str(request.get("creative_direction") or request.get("prompt") or "").strip()
@@ -476,25 +625,153 @@ async def configure_session(request: dict):
         "typography" if project_mode in ("typography", "lyric", "lyrics") else "mtv"
     )
 
-    comfy_backend = str(
-        request.get("comfy_backend") or session.get("comfy_backend") or COMFYUI_BACKEND
-    ).strip().lower()
-    if comfy_backend not in ("cloud", "local", "ai-playground"):
-        comfy_backend = COMFYUI_BACKEND
-    comfy_url = str(
-        request.get("comfy_url") or session.get("comfy_url") or COMFYUI_URL
-    ).strip().rstrip("/")
-    if not comfy_url.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="Comfy URL must start with http:// or https://")
+    from server.pipeline import (
+        comfy_backend_for_video,
+        needs_comfy_url,
+        needs_home_agent,
+        normalize_pipeline,
+    )
+
+    # Optional named preset (cloud / playground / playground_agent / hybrid)
+    if request.get("pipeline_preset"):
+        from server.pipeline import apply_preset
+
+        preset = apply_preset(str(request.get("pipeline_preset") or ""))
+        if preset:
+            request = {**request, **preset}
+
+    lanes = normalize_pipeline(session, request)
+    session.update(lanes)
+    # Legacy boolean mirrors for older clients
+    session["use_home_agent_llm"] = lanes["pipeline_director"] == "home_agent"
+    session["use_home_agent_stills"] = lanes["pipeline_stills"] == "home_agent"
+
+    comfy_backend = comfy_backend_for_video(lanes["pipeline_video"])
+    # Stills via Comfy on a LAN box while video is cloud still needs a URL only for stills
+    if lanes["pipeline_stills"] == "comfy" and lanes["pipeline_video"] == "comfy_cloud":
+        comfy_backend = "cloud"
+    elif lanes["pipeline_video"] == "comfy_local" or (
+        lanes["pipeline_stills"] == "comfy" and lanes["pipeline_video"] == "home_agent"
+    ):
+        # Prefer explicit request backend when local/playground
+        req_backend = str(
+            request.get("comfy_backend") or session.get("comfy_backend") or "local"
+        ).strip().lower()
+        if req_backend in ("local", "ai-playground"):
+            comfy_backend = req_backend
+        else:
+            comfy_backend = "local"
+
+    if "home_agent_url" in request:
+        session["home_agent_url"] = str(
+            request.get("home_agent_url") or ""
+        ).strip().rstrip("/")
+    if "home_agent_password" in request:
+        session["home_agent_password"] = str(
+            request.get("home_agent_password") or ""
+        ).strip()[:200]
+    if "hermes_url" in request:
+        session["hermes_url"] = str(request.get("hermes_url") or "").strip().rstrip("/")
+    if "hermes_token" in request:
+        session["hermes_token"] = str(request.get("hermes_token") or "").strip()[:500]
+
+    if needs_home_agent(lanes):
+        if not session.get("home_agent_url"):
+            raise HTTPException(
+                status_code=400,
+                detail="Home Agent URL required for the selected pipeline lanes",
+            )
+        if not (
+            session.get("home_agent_password") or os.getenv("HOME_AGENT_PASSWORD")
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Home Agent password required for the selected pipeline lanes",
+            )
+
+    if comfy_backend == "cloud":
+        comfy_url = COMFY_CLOUD_URL.rstrip("/")
+        if lanes["pipeline_video"] == "comfy_cloud" and not os.getenv(
+            "COMFY_CLOUD_API_KEY"
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Comfy Cloud selected but COMFY_CLOUD_API_KEY is not set in .env",
+            )
+    else:
+        comfy_url = str(
+            request.get("comfy_url") or session.get("comfy_url") or COMFYUI_URL
+        ).strip().rstrip("/")
+        if needs_comfy_url(lanes) or lanes["pipeline_stills"] == "comfy":
+            if not comfy_url.startswith(("http://", "https://")):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Comfy URL must start with http:// or https://",
+                )
     session["comfy_backend"] = comfy_backend
     session["comfy_url"] = comfy_url
 
+    # Director LLM routing
+    global llm_backend
+    if lanes["pipeline_director"] == "home_agent" and session.get("home_agent_url"):
+        from server.llm.home_agent_backend import HomeAgentBackend
+        from server.llm.llm_factory import set_active_backend
+
+        ha = HomeAgentBackend(
+            base_url=session.get("home_agent_url"),
+            password=session.get("home_agent_password")
+            or os.getenv("HOME_AGENT_PASSWORD")
+            or "",
+        )
+        set_active_backend(ha)
+        llm_backend = ha
+        LOG.info("LLM switched to Home Agent at %s", session.get("home_agent_url"))
+        if session_id in active_directors:
+            active_directors[session_id].llm = ha
+    elif lanes["pipeline_director"] == "hermes":
+        from server.llm.hermes_backend import HermesAgentBackend
+        from server.llm.llm_factory import set_active_backend
+
+        hermes = HermesAgentBackend(
+            base_url=session.get("hermes_url") or os.getenv("HERMES_URL"),
+            token=session.get("hermes_token") or os.getenv("HERMES_TOKEN"),
+        )
+        set_active_backend(hermes)
+        llm_backend = hermes
+        LOG.info("LLM switched to Hermes at %s", hermes.base_url)
+        if session_id in active_directors:
+            active_directors[session_id].llm = hermes
+
     director = _get_director(session_id)
+    if llm_backend is not None:
+        director.llm = llm_backend
     director.singer_profile = session.get("singer_profile") or {}
     director.video_backend = backend
     director.performance_mix = mix
     director.project_mode = session["project_mode"]
     director.configure_comfy(comfy_backend, comfy_url)
+    director.configure_home_agent(
+        session.get("home_agent_url") or "",
+        session.get("home_agent_password")
+        or os.getenv("HOME_AGENT_PASSWORD")
+        or "",
+        use_stills=lanes["pipeline_stills"] == "home_agent",
+        use_video=lanes["pipeline_video"] == "home_agent",
+    )
+    director.configure_pipeline(
+        director=lanes["pipeline_director"],
+        stills=lanes["pipeline_stills"],
+        video=lanes["pipeline_video"],
+    )
+    LOG.info(
+        "Session %s pipeline dir=%s stills=%s video=%s comfy=%s (%s)",
+        session_id,
+        lanes["pipeline_director"],
+        lanes["pipeline_stills"],
+        lanes["pipeline_video"],
+        comfy_backend,
+        director.comfy_url,
+    )
     director.character_lock = ""  # rebuild with new singer details
     _write_project_manifest(session_id, session)
     return {
@@ -505,6 +782,9 @@ async def configure_session(request: dict):
         "project_mode": session["project_mode"],
         "comfy_backend": comfy_backend,
         "comfy_url": comfy_url,
+        "pipeline_director": lanes["pipeline_director"],
+        "pipeline_stills": lanes["pipeline_stills"],
+        "pipeline_video": lanes["pipeline_video"],
         "has_lyrics": bool((session.get("lyrics") or "").strip()),
     }
 
@@ -659,7 +939,7 @@ async def chat_endpoint(request: dict):
             {
                 "role": "system",
                 "content": (
-                    "You are VidMuse, an expert AI music video director. "
+                    "You are SceneMux, an expert AI music video director. "
                     "Be cinematic, specific, and helpful. When proposing concepts, "
                     "number them clearly (1. 2. 3.)."
                 ),
@@ -1156,6 +1436,344 @@ async def edit_final(request: dict):
     }
 
 
+# ─── Studio (H3-only media editor) ──────────────────────────────────────
+
+
+def _studio_plan_public(session_id: str, plan: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not plan:
+        return {"scenes": [], "duration": 0}
+    scenes = []
+    for sc in plan.get("scenes") or []:
+        item = dict(sc)
+        item.pop("video_path", None)
+        item.pop("still_path", None)
+        scenes.append(item)
+    return {
+        "version": plan.get("version"),
+        "duration": plan.get("duration"),
+        "direction": plan.get("direction"),
+        "character": plan.get("character"),
+        "character_lock": plan.get("character_lock"),
+        "identity_sheet_url": plan.get("identity_sheet_url"),
+        "review_status": plan.get("review_status"),
+        "backend": plan.get("backend") or "minimax-h3",
+        "scenes": scenes,
+    }
+
+
+@app.post("/api/studio/plan")
+async def studio_plan(request: dict):
+    """Build a lyric storyboard plan + lock performer identity (no H3 video yet)."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session or not session.get("audio_path"):
+        raise HTTPException(status_code=400, detail="Upload audio first")
+    direction = str(
+        request.get("direction")
+        or session.get("creative_direction")
+        or session.get("concept_prompt")
+        or ""
+    ).strip()
+    if not direction:
+        raise HTTPException(status_code=400, detail="Creative direction required")
+
+    director = _get_director(session_id)
+    _hydrate_director(director, session)
+    session["creative_direction"] = direction[:2000]
+    session["video_backend"] = "minimax-h3"
+    director.video_backend = "minimax-h3"
+    lock_identity = bool(request.get("lock_identity", True))
+    reset_identity = bool(request.get("reset_identity", False))
+    if reset_identity:
+        director.identity_sheet_path = None
+        director.character_lock = ""
+        director._video_seed_base = None
+        session.pop("identity_sheet_path", None)
+
+    try:
+        plan = await director.build_studio_timeline_plan(
+            direction, lock_identity=lock_identity
+        )
+    except Exception as exc:
+        LOG.exception("Studio plan failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if director.identity_sheet_path:
+        session["identity_sheet_path"] = director.identity_sheet_path
+    elif reset_identity:
+        session.pop("identity_sheet_path", None)
+    session["timeline_plan"] = plan
+    session["status"] = "studio_planned"
+    _write_project_manifest(session_id, session)
+    return {
+        "session_id": session_id,
+        "timeline_plan": _studio_plan_public(session_id, plan),
+        "identity_sheet_url": plan.get("identity_sheet_url"),
+    }
+
+
+@app.post("/api/studio/storyboard-stills")
+async def studio_storyboard_stills(request: dict):
+    """Generate cheap still previews for storyboard review before H3 credits."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session or not session.get("audio_path"):
+        raise HTTPException(status_code=400, detail="Upload audio first")
+
+    director = _get_director(session_id)
+    _hydrate_director(director, session)
+    if not director.timeline_plan and session.get("timeline_plan"):
+        director.timeline_plan = session["timeline_plan"]
+    if not director.timeline_plan:
+        raise HTTPException(status_code=400, detail="Plan the storyboard first")
+
+    max_scenes = request.get("max_scenes")
+    scene_indices = request.get("scene_indices")
+    try:
+        max_scenes_i = int(max_scenes) if max_scenes is not None else None
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="max_scenes must be an int") from exc
+    indices = None
+    if isinstance(scene_indices, list):
+        try:
+            indices = [int(i) for i in scene_indices]
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400, detail="scene_indices must be ints"
+            ) from exc
+
+    try:
+        plan = await director.generate_studio_storyboard_stills(
+            max_scenes=max_scenes_i,
+            scene_indices=indices,
+        )
+    except Exception as exc:
+        LOG.exception("Studio storyboard stills failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if director.identity_sheet_path:
+        session["identity_sheet_path"] = director.identity_sheet_path
+    session["timeline_plan"] = plan
+    session["status"] = "studio_review"
+    _write_project_manifest(session_id, session)
+    return {
+        "session_id": session_id,
+        "timeline_plan": _studio_plan_public(session_id, plan),
+        "identity_sheet_url": plan.get("identity_sheet_url"),
+    }
+
+
+@app.post("/api/studio/update-plan")
+async def studio_update_plan(request: dict):
+    """Persist client-edited scene prompts before preview / full render."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session:
+        raise HTTPException(status_code=400, detail="Invalid session")
+    director = _get_director(session_id)
+    _hydrate_director(director, session)
+    if not director.timeline_plan and session.get("timeline_plan"):
+        director.timeline_plan = session["timeline_plan"]
+    plan = director.timeline_plan
+    if not plan or not plan.get("scenes"):
+        raise HTTPException(status_code=400, detail="No timeline plan yet")
+
+    updates = request.get("scenes") or []
+    by_index = {int(s["index"]): s for s in plan["scenes"] if "index" in s}
+    for item in updates:
+        try:
+            idx = int(item.get("index"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        scene = by_index.get(idx)
+        if not scene:
+            continue
+        if item.get("prompt") is not None:
+            scene["prompt"] = str(item.get("prompt") or "")[:4000]
+        if item.get("type") is not None:
+            scene["type"] = str(item.get("type") or scene.get("type"))[:40]
+
+    plan_path = director.output_dir / "timeline_plan.json"
+    plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    director.timeline_plan = plan
+    session["timeline_plan"] = plan
+    _write_project_manifest(session_id, session)
+    return {
+        "session_id": session_id,
+        "timeline_plan": _studio_plan_public(session_id, plan),
+    }
+
+
+@app.post("/api/studio/render")
+async def studio_render(request: dict):
+    """Render all H3 scenes (rebuild plan by default) and assemble."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session or not session.get("audio_path"):
+        raise HTTPException(status_code=400, detail="Upload audio first")
+    direction = str(
+        request.get("direction") or session.get("creative_direction") or ""
+    ).strip()
+    if not direction:
+        raise HTTPException(status_code=400, detail="Creative direction required")
+
+    rebuild = bool(request.get("rebuild_plan", True))
+    director = _get_director(session_id)
+    _hydrate_director(director, session)
+    if not director.timeline_plan and session.get("timeline_plan"):
+        director.timeline_plan = session["timeline_plan"]
+    # Apply any last-minute prompt edits from the client
+    for item in request.get("scenes") or []:
+        try:
+            idx = int(item.get("index"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        scenes = (director.timeline_plan or {}).get("scenes") or []
+        if 0 <= idx < len(scenes) and item.get("prompt") is not None:
+            scenes[idx]["prompt"] = str(item.get("prompt") or "")[:4000]
+    session["creative_direction"] = direction[:2000]
+    session["video_backend"] = "minimax-h3"
+    director.video_backend = "minimax-h3"
+    session["status"] = "studio_rendering"
+
+    async def _run():
+        try:
+            result = await director.render_studio_all(
+                direction, rebuild_plan=rebuild
+            )
+            session["timeline_plan"] = director.timeline_plan
+            if director.identity_sheet_path:
+                session["identity_sheet_path"] = director.identity_sheet_path
+            session["final_video_path"] = result.get("final_video_path")
+            session["status"] = "done"
+            _write_project_manifest(session_id, session)
+            if session_id in connected_clients:
+                try:
+                    await connected_clients[session_id].send_json(
+                        {
+                            "type": "studio_complete",
+                            "timeline_plan": _studio_plan_public(
+                                session_id, director.timeline_plan
+                            ),
+                            "download_url": f"/api/download/{session_id}",
+                        }
+                    )
+                except Exception:
+                    pass
+        except Exception as exc:
+            LOG.exception("Studio render failed")
+            session["status"] = "studio_failed"
+            session["error"] = str(exc)
+            if session_id in connected_clients:
+                try:
+                    await connected_clients[session_id].send_json(
+                        {"type": "studio_error", "error": str(exc)}
+                    )
+                except Exception:
+                    pass
+
+    asyncio.create_task(_run())
+    return {
+        "session_id": session_id,
+        "status": "started",
+        "timeline_plan": _studio_plan_public(
+            session_id, session.get("timeline_plan") or director.timeline_plan
+        ),
+    }
+
+
+@app.post("/api/studio/render-scene")
+async def studio_render_scene(request: dict):
+    """Re-render one H3 scene and optionally reassemble the cut."""
+    session_id = request.get("session_id")
+    scene_index = request.get("scene_index")
+    session = legacy_sessions.get(session_id or "")
+    if not session or not session.get("audio_path"):
+        raise HTTPException(status_code=400, detail="Upload audio first")
+    if scene_index is None:
+        raise HTTPException(status_code=400, detail="scene_index required")
+    try:
+        scene_index = int(scene_index)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="scene_index must be an int") from exc
+
+    director = _get_director(session_id)
+    _hydrate_director(director, session)
+    if not director.timeline_plan and session.get("timeline_plan"):
+        director.timeline_plan = session["timeline_plan"]
+    if not director.timeline_plan:
+        raise HTTPException(status_code=400, detail="No timeline plan yet")
+
+    direction = str(
+        request.get("direction")
+        or session.get("creative_direction")
+        or director.timeline_plan.get("direction")
+        or ""
+    ).strip()
+    prompt_override = str(request.get("prompt") or "").strip()
+    scenes = director.timeline_plan.get("scenes") or []
+    if 0 <= scene_index < len(scenes) and prompt_override:
+        scenes[scene_index]["prompt"] = prompt_override
+
+    try:
+        scene = await director.render_studio_scene(
+            scene_index, plan=director.timeline_plan, direction=direction or None
+        )
+    except Exception as exc:
+        LOG.exception("Studio scene render failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    session["timeline_plan"] = director.timeline_plan
+    reassemble = bool(request.get("reassemble", True))
+    download_url = None
+    if reassemble:
+        try:
+            final_path = await director.assemble_studio_final()
+            session["final_video_path"] = final_path
+            session["status"] = "done"
+            download_url = f"/api/download/{session_id}"
+        except Exception as exc:
+            LOG.warning("Studio reassemble skipped: %s", exc)
+
+    _write_project_manifest(session_id, session)
+    public_scene = dict(scene)
+    public_scene.pop("video_path", None)
+    return {
+        "session_id": session_id,
+        "scene": public_scene,
+        "timeline_plan": _studio_plan_public(session_id, director.timeline_plan),
+        "download_url": download_url,
+    }
+
+
+@app.get("/api/studio/{session_id}/state")
+async def studio_state(session_id: str):
+    """Poll studio timeline + final cut status."""
+    session = legacy_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    plan = session.get("timeline_plan")
+    director = active_directors.get(session_id)
+    if director and director.timeline_plan:
+        plan = director.timeline_plan
+        session["timeline_plan"] = plan
+    return {
+        "session_id": session_id,
+        "status": session.get("status"),
+        "timeline_plan": _studio_plan_public(session_id, plan),
+        "download_url": (
+            f"/api/download/{session_id}" if session.get("final_video_path") else None
+        ),
+        "error": session.get("error"),
+        "track_title": (session.get("audio_analysis") or {}).get("track_title"),
+        "duration": (session.get("audio_analysis") or {}).get("duration"),
+        "lyrics_preview": ((session.get("lyrics") or "")[:400] or None),
+        "comfy_backend": session.get("comfy_backend"),
+        "comfy_url": session.get("comfy_url"),
+        "has_references": bool(session.get("reference_images")),
+    }
+
+
 @app.get("/api/download/{session_id}")
 async def download_video(session_id: str):
     session = legacy_sessions.get(session_id)
@@ -1174,6 +1792,133 @@ async def get_session(session_id: str):
     if not session:
         return {"error": "Session not found"}
     return session
+
+
+@app.get("/api/projects")
+async def list_projects():
+    """List recent project manifests for resume."""
+    projects = []
+    if not OUTPUT_DIR.is_dir():
+        return {"projects": []}
+    for path in sorted(OUTPUT_DIR.glob("*/project.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        sid = data.get("session_id") or path.parent.name
+        final = path.parent / f"vidmuse_{sid}.mp4"
+        # Also accept any assembled mp4
+        finals = list(path.parent.glob("vidmuse_*.mp4")) + list(path.parent.glob("*_final.mp4"))
+        projects.append(
+            {
+                "session_id": sid,
+                "creative_direction": (data.get("creative_direction") or "")[:160],
+                "pipeline": data.get("pipeline") or {},
+                "comfy": data.get("comfy") or {},
+                "has_final": final.is_file() or any(f.is_file() for f in finals),
+                "mtime": path.stat().st_mtime,
+            }
+        )
+        if len(projects) >= 24:
+            break
+    return {"projects": projects}
+
+
+@app.post("/api/studio/estimate")
+async def studio_estimate(request: dict):
+    """Rough credit/time estimate before full render."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    plan = (session or {}).get("timeline_plan") or {}
+    scenes = plan.get("scenes") or []
+    remaining = [
+        s
+        for s in scenes
+        if s.get("status") != "ready" or not s.get("video_path")
+    ]
+    video = str(
+        (session or {}).get("pipeline_video")
+        or request.get("pipeline_video")
+        or "comfy_cloud"
+    )
+    n = len(remaining) if remaining else len(scenes)
+    # Rough heuristics
+    if video == "comfy_cloud":
+        per = "1 Comfy Cloud H3 job"
+        minutes = n * 4
+    elif video == "home_agent":
+        per = "1 Home Agent H3 job"
+        minutes = n * 8
+    else:
+        per = "1 local / Playground H3 job"
+        minutes = n * 6
+    return {
+        "session_id": session_id,
+        "scene_total": len(scenes),
+        "scenes_to_render": n,
+        "pipeline_video": video,
+        "per_scene": per,
+        "est_minutes_low": max(1, int(minutes * 0.6)),
+        "est_minutes_high": max(2, int(minutes * 1.4)),
+        "note": "Estimates are approximate; queue load and clip length vary.",
+    }
+
+
+@app.post("/api/studio/export-vertical")
+async def studio_export_vertical(request: dict):
+    """Create a 9:16 center-crop derivative of the finished master."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session or not session.get("final_video_path"):
+        raise HTTPException(status_code=400, detail="No finished video to export")
+    src = Path(session["final_video_path"])
+    if not src.is_file():
+        raise HTTPException(status_code=404, detail="Final video file missing")
+    dest = src.parent / f"{src.stem}_vertical.mp4"
+    import subprocess
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(src),
+        "-vf",
+        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "20",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        str(dest),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0 or not dest.is_file():
+        raise HTTPException(
+            status_code=500,
+            detail=f"Vertical export failed: {(result.stderr or '')[-300:]}",
+        )
+    session["vertical_video_path"] = str(dest)
+    return {
+        "session_id": session_id,
+        "download_url": f"/api/session/{session_id}/download-vertical",
+    }
+
+
+@app.get("/api/session/{session_id}/download-vertical")
+async def download_vertical(session_id: str):
+    session = legacy_sessions.get(session_id)
+    if not session or not session.get("vertical_video_path"):
+        raise HTTPException(status_code=404, detail="No vertical export")
+    return FileResponse(
+        session["vertical_video_path"],
+        media_type="video/mp4",
+        filename=f"scenemux_{session_id}_vertical.mp4",
+    )
 
 
 # ─── MAIN ───────────────────────────────────────────────────────────────

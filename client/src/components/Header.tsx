@@ -1,4 +1,5 @@
 import { Cloud, Cpu, Wifi, WifiOff } from "lucide-react";
+import { BRAND } from "../brand";
 
 interface Props {
   serverHealth: any;
@@ -34,11 +35,13 @@ export function Header({ serverHealth }: Props) {
       <div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-300 via-sky-400 to-amber-400 flex items-center justify-center shrink-0">
-            <span className="font-display font-bold text-[#071018] text-xs">VM</span>
+            <span className="font-display font-bold text-[#071018] text-xs">
+              {BRAND.mark}
+            </span>
           </div>
           <div className="min-w-0">
             <span className="font-display font-semibold text-lg leading-none tracking-tight block truncate text-[var(--ink)]">
-              VidMuse
+              {BRAND.name}
             </span>
             <span className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-secondary)]">
               {mode} studio

@@ -10,7 +10,7 @@ Priority (cloud mode / VIDMUSE_MODE=cloud):
   2. Free-tier Ollama Cloud model alternates (subscription 403 → next model)
   3. OpenCode Go (when OPENCODE_API_KEY is set)
 
-Override with LLM_PROVIDER=ollama|llamacpp|opencode-go
+Override with LLM_PROVIDER=ollama|llamacpp|opencode-go|home-agent|hermes
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ import os
 from typing import Any, Dict, List, Optional
 
 from server.llm.base import LLMBackend
+from server.llm.hermes_backend import HermesAgentBackend
+from server.llm.home_agent_backend import HomeAgentBackend
 from server.llm.llamacpp_backend import auto_detect_llama_cpp
 from server.llm.ollama_backend import CreditExhaustedError, OllamaBackend
 from server.llm.opencode_backend import OpenCodeGoBackend
@@ -324,6 +326,14 @@ def create_llm_backend() -> Optional[LLMBackend]:
     mode = _mode()
 
     # Explicit provider override
+    if provider in ("home-agent", "home_agent", "aipg-home-agent"):
+        backend = HomeAgentBackend()
+        _active_backend = backend
+        return backend
+    if provider in ("hermes", "hermes-agent", "hermes_agent"):
+        backend = HermesAgentBackend()
+        _active_backend = backend
+        return backend
     if provider in ("opencode-go", "opencode", "opencode-zen"):
         backend = _opencode_cascade()
         _active_backend = backend
@@ -427,5 +437,23 @@ async def health_check_all() -> Dict[str, Any]:
             results["opencode-go"] = {"status": "unconfigured"}
     except Exception:
         results["opencode-go"] = {"status": "unavailable"}
+
+    try:
+        ha_url = (os.getenv("HOME_AGENT_URL") or "").strip()
+        ha_pwd = (os.getenv("HOME_AGENT_PASSWORD") or "").strip()
+        if ha_url and ha_pwd:
+            results["home-agent"] = await HomeAgentBackend(
+                base_url=ha_url, password=ha_pwd
+            ).health()
+        elif ha_url:
+            results["home-agent"] = {
+                "status": "unconfigured",
+                "url": ha_url,
+                "reason": "HOME_AGENT_PASSWORD missing",
+            }
+        else:
+            results["home-agent"] = {"status": "unconfigured"}
+    except Exception as exc:
+        results["home-agent"] = {"status": "unavailable", "error": str(exc)}
 
     return results

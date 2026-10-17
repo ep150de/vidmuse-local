@@ -7,7 +7,7 @@ The director drives the full pipeline:
 4. Generate storyboard prompts via LLM
 5. Generate storyboard images via ComfyUI
 6. Generate video motion prompts via LLM
-7. Generate video clips via ComfyUI LTX-2.3 (image+audio) or HuMo
+7. Generate video clips via ComfyUI MiniMax H3 / InfiniteTalk / LTX-2.3 IA2V / HuMo
 8. Assemble final MP4 synced to music beats via FFmpeg
 
 User input required:
@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Callable
 
 from server.llm.base import LLMBackend
 from server.audio_analyzer import AudioAnalyzer
-from server.image_generator import ComfyUIClient
+from server.image_generator import ComfyUIClient, _h3_align_frames
 from server.video_editor import VideoEditor
 
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/tmp/vidmuse/outputs"))
@@ -80,10 +80,20 @@ class HermesDirector:
         self.character_lock: str = ""
         self.singer_profile: Dict[str, Any] = {}
         self.video_backend: str = (
-            os.getenv("COMFY_VIDEO_BACKEND") or "infinitetalk"
+            os.getenv("COMFY_VIDEO_BACKEND") or "minimax-h3"
         ).strip().lower()
         self._video_seed_base: Optional[int] = None
         self.final_video_path: Optional[str] = None
+        self.timeline_plan: Optional[Dict[str, Any]] = None
+
+        # Optional Home Agent (Playground local-web) — additive to Comfy
+        self.home_agent_url: str = ""
+        self.home_agent_password: str = ""
+        self.use_home_agent_stills: bool = False
+        self.use_home_agent_video: bool = False
+        self.pipeline_director: str = "cloud_llm"
+        self.pipeline_stills: str = "comfy"
+        self.pipeline_video: str = "comfy_cloud"
 
         # Progress tracking
         self._progress_callback: Optional[ProgressCallback] = None
@@ -102,6 +112,92 @@ class HermesDirector:
         self.comfy_backend = normalized
         self.comfy_url = self.comfyui.url
         LOG.info("Session Comfy backend: %s (%s)", normalized, self.comfy_url)
+
+    def configure_home_agent(
+        self,
+        url: Optional[str],
+        password: Optional[str] = None,
+        *,
+        use_stills: bool = False,
+        use_video: bool = False,
+    ) -> None:
+        """Attach Home Agent LAN settings for optional still / H3 generation."""
+        self.home_agent_url = (url or "").strip().rstrip("/")
+        self.home_agent_password = (password or "").strip()
+        self.use_home_agent_stills = bool(use_stills) and bool(self.home_agent_url)
+        self.use_home_agent_video = bool(use_video) and bool(self.home_agent_url)
+        LOG.info(
+            "Home Agent stills=%s video=%s url=%s",
+            self.use_home_agent_stills,
+            self.use_home_agent_video,
+            self.home_agent_url or "(none)",
+        )
+
+    def configure_pipeline(
+        self,
+        *,
+        director: str = "cloud_llm",
+        stills: str = "comfy",
+        video: str = "comfy_cloud",
+    ) -> None:
+        self.pipeline_director = director
+        self.pipeline_stills = stills
+        self.pipeline_video = video
+        self.use_home_agent_stills = stills == "home_agent" and bool(self.home_agent_url)
+        self.use_home_agent_video = video == "home_agent" and bool(self.home_agent_url)
+
+    async def _generate_image_via_home_agent(
+        self,
+        prompt: str,
+        *,
+        job_type: str = "storyboard_still",
+        dest_dir: Optional[Path] = None,
+        reference_image_paths: Optional[List[str]] = None,
+        extras: Optional[Dict[str, Any]] = None,
+        width: int = 768,
+        height: int = 448,
+    ) -> Optional[str]:
+        """Ask Playground Home Agent to generate one still; return local path."""
+        if not self.home_agent_url:
+            raise RuntimeError("Home Agent URL not configured")
+        if not self.home_agent_password:
+            raise RuntimeError("Home Agent password not configured")
+
+        from server.home_agent.client import HomeAgentClient
+        from server.home_agent.jobs import encode_local_images, run_media_job
+
+        out_dir = dest_dir or (self.output_dir / "home_agent_stills")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        client = HomeAgentClient(
+            self.home_agent_url,
+            self.home_agent_password,
+            timeout=float(os.getenv("HOME_AGENT_TIMEOUT", "300")),
+        )
+        job_extras: Dict[str, Any] = {
+            "width": width,
+            "height": height,
+            "no_onscreen_text": True,
+        }
+        if extras:
+            job_extras.update(extras)
+        images = encode_local_images(reference_image_paths)
+        result = await run_media_job(
+            client,
+            job_type=job_type,
+            prompt=prompt,
+            dest_dir=out_dir,
+            extras=job_extras,
+            images=images or None,
+            wait_timeout=float(os.getenv("HOME_AGENT_TIMEOUT", "300")),
+        )
+        saved = result.get("saved_paths") or []
+        if not saved:
+            LOG.warning(
+                "Home Agent still job produced no image (reply=%r)",
+                (result.get("reply_text") or "")[:200],
+            )
+            return None
+        return str(saved[0])
 
     def on_frame_ready(self, callback: FrameReadyCallback) -> None:
         """Register callback when a storyboard frame image finishes rendering."""
@@ -303,11 +399,22 @@ class HermesDirector:
         else:
             mode_hint = (
                 "Favor intimate face/head performance framing with the same singer in every concept."
-                if video_mode in ("infinitetalk", "infinite-talk", "wan-infinitetalk", "talk", "humo")
+                if video_mode
+                in (
+                    "infinitetalk",
+                    "infinite-talk",
+                    "wan-infinitetalk",
+                    "talk",
+                    "humo",
+                    "minimax-h3",
+                    "minimax_h3",
+                    "h3",
+                    "minimax",
+                )
                 else "Favor cinematic music-video framing while keeping the same singer identity."
             )
 
-        system_prompt = """You are VidMuse, an expert AI music video director.
+        system_prompt = """You are SceneMux, an expert AI music video director.
 Your #1 job is lyric fidelity. Concepts must clearly come from the lyric theme brief and lyrics.
 If a concept could fit a different song after removing the title, it is WRONG.
 User creative direction only adjusts tone/camera/style — never replaces lyric meaning.
@@ -770,54 +877,89 @@ Respond with ONLY this JSON:
     async def ensure_identity_sheet(
         self,
         concept: Optional[Dict[str, Any]] = None,
+        *,
+        allow_text_only: bool = False,
     ) -> Optional[str]:
-        """Build one locked performer still from the user reference photo."""
+        """Build one locked performer still (from photo, or text lock when allowed)."""
         if self.identity_sheet_path and Path(self.identity_sheet_path).is_file():
             return self.identity_sheet_path
 
         refs = [p for p in (self.reference_images or []) if p and Path(p).is_file()]
-        if not refs:
+        if not refs and not allow_text_only:
             LOG.info("No reference photos — skipping identity sheet")
             return None
 
         self._emit_progress(
             self.PHASE_REFERENCES,
             20,
-            "Locking performer identity from reference photo…",
+            "Locking performer identity…"
+            if refs
+            else "Inventing a locked performer look from direction…",
         )
         concept = concept or self.selected_concept or {}
         singer = self._singer_brief()
         framing = (self.singer_profile or {}).get("framing") or "close-up on face and head"
-        style = concept.get("style") or "cinematic music video"
-        prompt = (
-            f"Music video identity sheet of the lead singer, {framing}, "
-            f"clear face looking toward camera, singing pose, soft studio backdrop, "
-            f"high detail face, same person as the reference photograph, "
-            f"{style}"
-            + (f", {singer}" if singer else "")
-            + ". Clean background, no crowd, one person only, photorealistic."
-        )
+        style = concept.get("style") or concept.get("direction") or "cinematic music video"
+        lock = (self.character_lock or "").strip()
+        if refs:
+            prompt = (
+                f"Music video identity sheet of the lead singer, {framing}, "
+                f"clear face looking toward camera, singing pose, soft studio backdrop, "
+                f"high detail face, same person as the reference photograph, "
+                f"{style}"
+                + (f", {singer}" if singer else "")
+                + ". Clean background, no crowd, one person only, photorealistic."
+            )
+        else:
+            prompt = (
+                f"Music video identity sheet, {framing}, clear face looking toward camera, "
+                f"singing pose, soft studio backdrop, high detail face, one person only, "
+                f"photorealistic. {lock or singer or 'distinctive lead performer'}. "
+                f"Style: {style}. Clean background, no crowd, no text."
+            )
 
         sheet_dir = self.output_dir / "identity"
         sheet_dir.mkdir(parents=True, exist_ok=True)
         dest = sheet_dir / "performer_sheet.png"
+        if self._video_seed_base is None:
+            self._video_seed_base = int(time.time()) % (2**31)
 
+        img_path = None
         try:
-            img_path = await self.comfyui.generate_image_turbo(
-                prompt=prompt,
-                width=768,
-                height=1024,
-                seed=(self._video_seed_base or int(time.time()) % (2**31)),
-                reference_image_paths=refs[:2],
-            )
+            if self.use_home_agent_stills:
+                self._emit_progress(
+                    self.PHASE_REFERENCES,
+                    40,
+                    "Identity sheet via Home Agent…",
+                )
+                img_path = await self._generate_image_via_home_agent(
+                    prompt,
+                    job_type="identity_sheet",
+                    dest_dir=sheet_dir,
+                    reference_image_paths=refs[:2] or None,
+                    extras={"framing": framing},
+                    width=768,
+                    height=1024,
+                )
+            else:
+                img_path = await self.comfyui.generate_image_turbo(
+                    prompt=prompt,
+                    width=768,
+                    height=1024,
+                    seed=self._video_seed_base,
+                    reference_image_paths=refs[:2] or None,
+                )
         except Exception as e:
             LOG.warning("Identity sheet generation failed: %s", e)
             img_path = None
 
         if img_path and Path(img_path).is_file():
-            shutil.copy(img_path, dest)
+            if Path(img_path).resolve() != dest.resolve():
+                shutil.copy(img_path, dest)
+            else:
+                dest = Path(img_path)
             self.identity_sheet_path = str(dest)
-            # Also prepare portrait framing for InfiniteTalk
+            # Portrait crop keeps face large for H3 / InfiniteTalk lip-sync
             try:
                 portrait = self.comfyui._prepare_performance_portrait(dest)
                 if portrait and Path(portrait).is_file():
@@ -831,9 +973,11 @@ Respond with ONLY this JSON:
             return self.identity_sheet_path
 
         # Fallback: use the first user ref as the sheet
-        self.identity_sheet_path = refs[0]
-        LOG.info("Using raw reference as identity sheet: %s", refs[0])
-        return self.identity_sheet_path
+        if refs:
+            self.identity_sheet_path = refs[0]
+            LOG.info("Using raw reference as identity sheet: %s", refs[0])
+            return self.identity_sheet_path
+        return None
 
     def _infer_shot_type(
         self,
@@ -1309,25 +1453,61 @@ Respond with ONLY this JSON:
         audio_src: str | Path,
         session_dir: Path,
         seed: int,
+        backend: Optional[str] = None,
     ) -> Optional[str]:
-        """Generate audio-aligned InfiniteTalk covering the full scene duration."""
+        """Generate audio-aligned avatar takes covering the full scene duration.
+
+        Backends: MiniMax H3 (longer takes), InfiniteTalk (chunked), or HuMo.
+        """
         scene_dur = float(frame.get("duration") or 6.0)
         start_t = float(frame.get("timestamp") or 0.0)
-        chunk_secs = float(os.getenv("COMFY_INFINITETALK_CLIP_SECONDS", "3.5"))
-        chunk_secs = min(max(2.0, chunk_secs), 5.0)
-        fps = float(os.getenv("COMFY_INFINITETALK_FPS", "25"))
+        avatar_backend = (
+            backend
+            or self.video_backend
+            or os.getenv("COMFY_VIDEO_BACKEND")
+            or "minimax-h3"
+        ).strip().lower()
+        if avatar_backend in ("minimax-h3", "minimax_h3", "h3", "minimax"):
+            avatar_backend = "minimax-h3"
+            chunk_secs = float(os.getenv("COMFY_H3_CLIP_SECONDS", "5.0"))
+            chunk_secs = min(max(3.0, chunk_secs), 12.0)
+            fps = float(os.getenv("COMFY_H3_FPS", "24"))
+            max_chunks = int(os.getenv("COMFY_H3_MAX_CHUNKS", "3"))
+            sample_rate, channels, normalize = "44100", "2", False
+            width, height = 768, 448
+            label = "MiniMax H3"
+        elif avatar_backend in ("humo", "wan", "wan-humo"):
+            avatar_backend = "humo"
+            chunk_secs = float(os.getenv("COMFY_HUMO_CLIP_SECONDS", "2.0"))
+            chunk_secs = min(max(1.5, chunk_secs), 4.0)
+            fps = float(os.getenv("COMFY_HUMO_FPS", "25"))
+            max_chunks = int(os.getenv("COMFY_HUMO_MAX_CHUNKS", "4"))
+            sample_rate, channels, normalize = "16000", "1", True
+            width, height = 512, 512
+            label = "HuMo"
+        else:
+            avatar_backend = "infinitetalk"
+            chunk_secs = float(os.getenv("COMFY_INFINITETALK_CLIP_SECONDS", "3.5"))
+            chunk_secs = min(max(2.0, chunk_secs), 5.0)
+            fps = float(os.getenv("COMFY_INFINITETALK_FPS", "25"))
+            max_chunks = int(os.getenv("COMFY_INFINITETALK_MAX_CHUNKS", "4"))
+            sample_rate, channels, normalize = "16000", "1", True
+            width, height = 480, 832
+            label = "InfiniteTalk"
+
         framing = (self.singer_profile or {}).get("framing") or "close-up on face and head"
-        width, height = 480, 832
-        if "full body" in framing.lower() or "waist" in framing.lower():
-            width, height = 832, 480
+        if avatar_backend != "humo" and (
+            "full body" in framing.lower() or "waist" in framing.lower()
+        ):
+            width, height = height, width  # landscape for wider framing
+            if avatar_backend == "minimax-h3":
+                width, height = 768, 448
 
         start_image = self._avatar_start_image(frame)
         if not start_image or not Path(start_image).is_file():
             return None
 
         n_chunks = max(1, int((scene_dur + chunk_secs - 0.05) // chunk_secs))
-        # Cap chunks per scene to control Cloud cost
-        max_chunks = int(os.getenv("COMFY_INFINITETALK_MAX_CHUNKS", "4"))
         n_chunks = min(n_chunks, max_chunks)
 
         chunk_paths: List[Path] = []
@@ -1341,11 +1521,14 @@ Respond with ONLY this JSON:
             if c == n_chunks - 1:
                 gen_secs = max(1.5, scene_dur - c * chunk_secs)
             remaining = max(0.0, scene_dur - (c + 1) * chunk_secs)
+            # H3 soft-cap ~15s per take
+            if avatar_backend == "minimax-h3":
+                gen_secs = min(gen_secs, 14.5)
 
             self._emit_progress(
                 self.PHASE_VIDEO,
                 min(95, 15 + frame_index * 3 + c),
-                f"Animating lip-sync take {frame_index + 1} chunk {c + 1}/{n_chunks}…",
+                f"Animating {label} take {frame_index + 1} chunk {c + 1}/{n_chunks}…",
             )
 
             audio_slice = session_dir / f"audio_{frame_index:02d}_{c:02d}.wav"
@@ -1355,16 +1538,19 @@ Respond with ONLY this JSON:
                     audio_slice,
                     chunk_start,
                     gen_secs,
-                    sample_rate="16000",
-                    channels="1",
-                    normalize=True,
+                    sample_rate=sample_rate,
+                    channels=channels,
+                    normalize=normalize,
                 )
             except Exception as e:
                 LOG.warning("Avatar audio slice failed: %s", e)
                 audio_slice = Path(audio_src)
 
             raw_frames = max(5, int(round(gen_secs * fps)))
-            if (raw_frames - 1) % 4 != 0:
+            if avatar_backend == "minimax-h3":
+                # length ≡ 5 (mod 17)
+                raw_frames = raw_frames + (5 - (raw_frames % 17)) % 17
+            elif (raw_frames - 1) % 4 != 0:
                 raw_frames = ((raw_frames - 1) // 4) * 4 + 1
 
             singing_prompt = (
@@ -1381,13 +1567,13 @@ Respond with ONLY this JSON:
                     duration=gen_secs,
                     width=width,
                     height=height,
-                    backend="infinitetalk",
+                    backend=avatar_backend,
                     previous_frames_path=(
                         current_start if c > 0 and current_start != start_image else None
                     ),
                 )
             except Exception as e:
-                LOG.warning("InfiniteTalk chunk %d failed: %s", c, e)
+                LOG.warning("%s chunk %d failed: %s", label, c, e)
                 video_path = None
 
             if not video_path or not Path(video_path).is_file():
@@ -1415,10 +1601,10 @@ Respond with ONLY this JSON:
         self,
         concept: Dict[str, Any],
     ) -> List[str]:
-        """Generate video clips — Avatar (InfiniteTalk) vs cinematic (LTX) by shot_type."""
+        """Generate video clips — Avatar (H3/InfiniteTalk/HuMo) vs cinematic (LTX) by shot_type."""
         await self.ensure_identity_sheet(concept)
         user_backend = (
-            self.video_backend or os.getenv("COMFY_VIDEO_BACKEND") or "infinitetalk"
+            self.video_backend or os.getenv("COMFY_VIDEO_BACKEND") or "minimax-h3"
         ).strip().lower()
         mix = (self.performance_mix or "hybrid").strip().lower()
         performance_first = mix.startswith("performance")
@@ -1447,15 +1633,19 @@ Respond with ONLY this JSON:
             shot_type = (frame.get("shot_type") or "cinematic").strip().lower()
             if performance_first and self.project_mode != "typography":
                 shot_type = "avatar"
-            # If user forced humo backend globally, still use avatar path for singing
+            # Avatar path for singing unless user forced pure LTX cinematic
             use_avatar = (
                 self.project_mode != "typography"
                 and shot_type == "avatar"
                 and user_backend != "ltx23"
             )
-            # Hybrid cinematic → LTX; if global backend is humo, use humo for cinematic too
             if use_avatar:
-                label = "InfiniteTalk"
+                if user_backend in ("minimax-h3", "minimax_h3", "h3", "minimax"):
+                    label = "MiniMax H3"
+                elif user_backend in ("humo", "wan", "wan-humo"):
+                    label = "HuMo"
+                else:
+                    label = "InfiniteTalk"
             elif user_backend in ("humo", "wan", "wan-humo"):
                 label = "HuMo"
             else:
@@ -1508,6 +1698,11 @@ Respond with ONLY this JSON:
             fill_mode = "freeze" if use_avatar else "loop"
 
             if use_avatar:
+                avatar_backend = "infinitetalk"
+                if user_backend in ("minimax-h3", "minimax_h3", "h3", "minimax"):
+                    avatar_backend = "minimax-h3"
+                elif user_backend in ("humo", "wan", "wan-humo"):
+                    avatar_backend = "humo"
                 video_path = await self._generate_avatar_scene(
                     frame=frame,
                     frame_index=i,
@@ -1515,6 +1710,7 @@ Respond with ONLY this JSON:
                     audio_src=audio_src,
                     session_dir=session_dir,
                     seed=seed,
+                    backend=avatar_backend,
                 )
             else:
                 # Single cinematic take (LTX / HuMo) — shorter clip OK with freeze/loop
@@ -1639,6 +1835,719 @@ Respond with ONLY this JSON:
         if result.returncode != 0 or not dest.is_file():
             raise RuntimeError(f"ffmpeg slice failed: {(result.stderr or '')[-300:]}")
         return dest
+
+    # ── Studio: H3-only lyric scene pipeline ──────────────────────────
+
+    NO_ONSCREEN_TEXT = "NO text, NO captions, NO letters, NO watermarks, NO subtitles"
+
+    def _studio_character_line(self) -> str:
+        if self.character_lock:
+            return self.character_lock
+        singer = self.singer_profile or {}
+        bits = [
+            singer.get("name"),
+            singer.get("presentation"),
+            singer.get("age_range"),
+            singer.get("look"),
+        ]
+        line = ", ".join(str(b).strip() for b in bits if b and str(b).strip())
+        framing = singer.get("framing") or "close-up on face and head"
+        if line:
+            return f"{line}; framing: {framing}"
+        return f"lead performer; framing: {framing}"
+
+    def _studio_identity_url(self) -> Optional[str]:
+        if not self.identity_sheet_path or not Path(self.identity_sheet_path).is_file():
+            return None
+        session_id = self.output_dir.name
+        return (
+            f"/api/session/{session_id}/asset/identity/"
+            f"{Path(self.identity_sheet_path).name}"
+        )
+
+    def _studio_lyric_windows(
+        self, duration: float, target_secs: float
+    ) -> List[Dict[str, Any]]:
+        """Partition the song into contiguous scene windows from lyric cues."""
+        analysis = self.audio_analysis or {}
+        cues = list(analysis.get("lyrics_cues") or [])
+        windows: List[Dict[str, Any]] = []
+        if cues:
+            # Group cues into ~target_secs blocks
+            i = 0
+            while i < len(cues):
+                start = float(cues[i].get("start") or 0.0)
+                texts: List[str] = []
+                end = start
+                j = i
+                while j < len(cues):
+                    c = cues[j]
+                    c_start = float(c.get("start") or end)
+                    c_end = float(c.get("end") or c_start)
+                    # Don't pull a cue across a long instrumental gap
+                    if texts and c_start - end > max(4.0, target_secs * 0.6):
+                        break
+                    texts.append(str(c.get("text") or "").strip())
+                    end = max(end, c_end)
+                    j += 1
+                    if end - start >= target_secs * 0.85 and j < len(cues):
+                        nxt = float(cues[j].get("end") or cues[j].get("start") or end)
+                        if nxt - start > target_secs * 1.35:
+                            break
+                end = min(duration, max(end, start + 2.0))
+                windows.append(
+                    {
+                        "start": start,
+                        "end": end,
+                        "lyric": " ".join(t for t in texts if t).strip(),
+                    }
+                )
+                i = max(j, i + 1)
+
+            # Insert instrumental coverage for gaps, lead-in, and outro
+            filled: List[Dict[str, Any]] = []
+            cursor = 0.0
+            for w in windows:
+                ws = float(w["start"])
+                we = float(w["end"])
+                if ws > cursor + 0.35:
+                    filled.append({"start": cursor, "end": ws, "lyric": ""})
+                filled.append(w)
+                cursor = we
+            if cursor < duration - 0.35:
+                filled.append({"start": cursor, "end": duration, "lyric": ""})
+            windows = filled or [
+                {"start": 0.0, "end": duration, "lyric": ""}
+            ]
+            # Snap edges for true contiguity
+            windows[0]["start"] = 0.0
+            for k in range(1, len(windows)):
+                windows[k]["start"] = windows[k - 1]["end"]
+            windows[-1]["end"] = duration
+        else:
+            t = 0.0
+            while t < duration - 0.25:
+                end = min(duration, t + target_secs)
+                windows.append({"start": t, "end": end, "lyric": ""})
+                t = end
+
+        # Merge undersized tails into previous
+        merged: List[Dict[str, Any]] = []
+        for w in windows:
+            dur = float(w["end"]) - float(w["start"])
+            if merged and dur < 3.0:
+                merged[-1]["end"] = w["end"]
+                if w.get("lyric"):
+                    merged[-1]["lyric"] = (
+                        f"{merged[-1].get('lyric') or ''} {w['lyric']}"
+                    ).strip()
+            else:
+                merged.append(dict(w))
+        if merged:
+            merged[-1]["end"] = duration
+
+        # Split oversized windows so each H3 take stays under ~12s
+        max_take = min(12.0, max(6.0, target_secs * 1.2))
+        split: List[Dict[str, Any]] = []
+        for w in merged:
+            start = float(w["start"])
+            end = float(w["end"])
+            lyric = str(w.get("lyric") or "")
+            while end - start > max_take + 0.5:
+                mid = start + max_take
+                split.append({"start": start, "end": mid, "lyric": lyric})
+                # lyric only on first chunk of a split
+                lyric = ""
+                start = mid
+            split.append({"start": start, "end": end, "lyric": lyric})
+        return split
+
+    def _studio_scene_type(self, index: int, total: int, lyric: str) -> str:
+        if index == 0 and not lyric:
+            return "INTRO_BROLL"
+        if index >= total - 1 and not lyric:
+            return "OUTRO"
+        # Prefer performance close-ups for lyric windows so lip-sync has a face.
+        # Occasional THEME beat for variety (every 4th lyric scene).
+        if lyric:
+            lyric_ord = index  # approximate; fine for cadence
+            return "THEME" if lyric_ord % 4 == 3 else "PERF"
+        return "THEME"
+
+    def _studio_default_prompt(
+        self,
+        *,
+        direction: str,
+        scene_type: str,
+        lyric: str,
+        character: str,
+    ) -> str:
+        look = direction.strip() or "cinematic music video, vivid lighting"
+        lyric_bit = f' Lyric moment: "{lyric}".' if lyric else ""
+        identity = (
+            f"Same locked performer throughout: {character}. "
+            "Do not change face, hair, skin tone, age, or wardrobe identity."
+        )
+        if scene_type == "PERF":
+            return (
+                f"{identity} Medium close-up singing to camera, mouth clearly visible, "
+                f"expressive lips matching the vocal audio, natural head motion. "
+                f"{look}.{lyric_bit} {self.NO_ONSCREEN_TEXT}."
+            )
+        if scene_type == "INTRO_BROLL":
+            return (
+                f"Instrumental intro atmosphere for the song. {look}. "
+                f"No performer close-up. {self.NO_ONSCREEN_TEXT}."
+            )
+        if scene_type == "OUTRO":
+            return (
+                f"{identity} Final closing pose, face readable. {look}. "
+                f"Soft ending energy. {self.NO_ONSCREEN_TEXT}."
+            )
+        return (
+            f"{identity} Thematic world shot featuring the same performer. "
+            f"{look}.{lyric_bit} {self.NO_ONSCREEN_TEXT}."
+        )
+
+    async def build_studio_timeline_plan(
+        self,
+        direction: str,
+        target_secs: Optional[float] = None,
+        *,
+        lock_identity: bool = True,
+    ) -> Dict[str, Any]:
+        """Build a contiguous lyric scene plan for H3 studio renders."""
+        analysis = self.audio_analysis or {}
+        duration = float(analysis.get("duration") or 0)
+        if duration <= 0 and self.audio_path:
+            await self.analyze_audio(self.audio_path)
+            analysis = self.audio_analysis or {}
+            duration = float(analysis.get("duration") or 0)
+        if duration <= 0:
+            raise ValueError("Song duration unknown — upload audio first")
+
+        concept = {
+            "title": "studio lead performer",
+            "style": direction[:180] or "cinematic music video",
+            "narrative": direction[:400],
+            "direction": direction,
+        }
+        await self._ensure_character_lock(concept)
+
+        if lock_identity:
+            await self.ensure_identity_sheet(concept, allow_text_only=True)
+
+        clip_secs = float(
+            target_secs
+            if target_secs is not None
+            else os.getenv("COMFY_H3_CLIP_SECONDS", "10.0")
+        )
+        clip_secs = min(max(6.0, clip_secs), 12.0)
+        windows = self._studio_lyric_windows(duration, clip_secs)
+        character = self._studio_character_line()
+        scenes: List[Dict[str, Any]] = []
+
+        for i, w in enumerate(windows):
+            start = float(w["start"])
+            end = float(w["end"])
+            lyric = str(w.get("lyric") or "").strip()
+            stype = self._studio_scene_type(i, len(windows), lyric)
+            prompt = self._studio_default_prompt(
+                direction=direction,
+                scene_type=stype,
+                lyric=lyric,
+                character=character,
+            )
+            # Optional LLM polish for prompts when available
+            if self.llm and lyric:
+                try:
+                    polished = await self.llm.generate(
+                        prompt=(
+                            "Write one MiniMax H3 music-video shot prompt (40-70 words). "
+                            "No on-screen text. Keep the SAME performer identity in every shot.\n"
+                            f"Direction: {direction}\n"
+                            f"Character lock (must reuse verbatim cues): {character}\n"
+                            f"Shot type: {stype}\n"
+                            f"Lyric: {lyric}\n"
+                            f"Draft: {prompt}"
+                        ),
+                        max_tokens=220,
+                        temperature=0.45,
+                    )
+                    if polished and len(polished.strip()) > 20:
+                        prompt = (
+                            f"{polished.strip()} Same performer: {character}. "
+                            f"{self.NO_ONSCREEN_TEXT}."
+                        )
+                except Exception as exc:
+                    LOG.warning("Studio prompt polish failed: %s", exc)
+
+            scenes.append(
+                {
+                    "index": i,
+                    "start": round(start, 3),
+                    "end": round(end, 3),
+                    "duration": round(max(1.5, end - start), 3),
+                    "type": stype,
+                    "lyric": lyric,
+                    "prompt": prompt,
+                    "status": "queued",
+                    "video_path": None,
+                    "video_url": None,
+                    "still_url": None,
+                    "still_path": None,
+                }
+            )
+
+        plan = {
+            "version": 2,
+            "duration": duration,
+            "direction": direction,
+            "character": character,
+            "character_lock": self.character_lock,
+            "identity_sheet_url": self._studio_identity_url(),
+            "backend": "minimax-h3",
+            "review_status": "pending",
+            "scenes": scenes,
+        }
+        plan_path = self.output_dir / "timeline_plan.json"
+        plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+        self.timeline_plan = plan
+        self._emit_progress(
+            self.PHASE_STORYBOARD,
+            40,
+            f"Storyboard plan ready — {len(scenes)} scenes (review before full render)",
+        )
+        return plan
+
+    async def generate_studio_storyboard_stills(
+        self,
+        *,
+        max_scenes: Optional[int] = None,
+        scene_indices: Optional[List[int]] = None,
+    ) -> Dict[str, Any]:
+        """Cheap still previews for storyboard review (not full H3 video)."""
+        plan = getattr(self, "timeline_plan", None)
+        if not plan or not plan.get("scenes"):
+            raise ValueError("No timeline plan — plan the storyboard first")
+
+        concept = {
+            "title": "studio lead performer",
+            "style": (plan.get("direction") or "")[:180],
+            "narrative": plan.get("direction") or "",
+            "direction": plan.get("direction") or "",
+        }
+        await self._ensure_character_lock(concept)
+        await self.ensure_identity_sheet(concept, allow_text_only=True)
+        plan["character"] = self._studio_character_line()
+        plan["character_lock"] = self.character_lock
+        plan["identity_sheet_url"] = self._studio_identity_url()
+
+        scenes = plan["scenes"]
+        if scene_indices is not None:
+            indices = [i for i in scene_indices if 0 <= i < len(scenes)]
+        else:
+            limit = max_scenes if max_scenes is not None else len(scenes)
+            indices = list(range(min(limit, len(scenes))))
+
+        board_dir = self.output_dir / "storyboard"
+        board_dir.mkdir(parents=True, exist_ok=True)
+        refs = self._identity_ref_paths()
+        session_id = self.output_dir.name
+        seed_base = self._video_seed_base or int(time.time()) % (2**31)
+        self._video_seed_base = seed_base
+
+        for n, idx in enumerate(indices):
+            scene = scenes[idx]
+            self._emit_progress(
+                self.PHASE_STORYBOARD,
+                int(45 + (n / max(1, len(indices))) * 50),
+                f"Storyboard still {n + 1}/{len(indices)}",
+            )
+            prompt = (
+                f"Music video storyboard frame, still photograph, "
+                f"{scene.get('prompt') or ''}. "
+                f"Same locked performer. {self.NO_ONSCREEN_TEXT}."
+            )
+            # INTRO_BROLL: avoid forcing face identity
+            use_refs = None if scene.get("type") == "INTRO_BROLL" else (refs[:2] or None)
+            try:
+                if self.use_home_agent_stills:
+                    img_path = await self._generate_image_via_home_agent(
+                        prompt,
+                        job_type="storyboard_still",
+                        dest_dir=board_dir / "ha_raw",
+                        reference_image_paths=use_refs,
+                        extras={
+                            "scene_index": idx,
+                            "scene_type": scene.get("type"),
+                            "seed": seed_base + idx * 3,
+                        },
+                        width=768,
+                        height=448,
+                    )
+                else:
+                    img_path = await self.comfyui.generate_image_turbo(
+                        prompt=prompt,
+                        width=768,
+                        height=448,
+                        seed=seed_base + idx * 3,
+                        reference_image_paths=use_refs,
+                    )
+            except Exception as exc:
+                LOG.warning("Storyboard still %d failed: %s", idx, exc)
+                img_path = None
+
+            if img_path and Path(img_path).is_file():
+                dest = board_dir / f"studio_still_{idx:02d}.png"
+                if Path(img_path).resolve() != dest.resolve():
+                    shutil.copy(img_path, dest)
+                else:
+                    dest = Path(img_path)
+                scene["still_path"] = str(dest)
+                scene["still_url"] = (
+                    f"/api/session/{session_id}/asset/storyboard/{dest.name}"
+                )
+                scene["still_source"] = (
+                    "home_agent" if self.use_home_agent_stills else self.comfy_backend
+                )
+            plan_path = self.output_dir / "timeline_plan.json"
+            plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+            self.timeline_plan = plan
+
+        plan["review_status"] = "stills_ready"
+        plan["identity_sheet_url"] = self._studio_identity_url()
+        plan_path = self.output_dir / "timeline_plan.json"
+        plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+        self.timeline_plan = plan
+        self._emit_progress(
+            self.PHASE_STORYBOARD,
+            100,
+            "Storyboard stills ready — review before spending H3 credits",
+        )
+        return plan
+
+    async def render_studio_scene(
+        self,
+        scene_index: int,
+        *,
+        plan: Optional[Dict[str, Any]] = None,
+        direction: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Render a single timeline scene with MiniMax H3."""
+        plan = plan or getattr(self, "timeline_plan", None)
+        if not plan:
+            plan_path = self.output_dir / "timeline_plan.json"
+            if plan_path.is_file():
+                plan = json.loads(plan_path.read_text(encoding="utf-8"))
+                self.timeline_plan = plan
+        if not plan or not plan.get("scenes"):
+            raise ValueError("No timeline plan — call build_studio_timeline_plan first")
+
+        scenes = plan["scenes"]
+        if scene_index < 0 or scene_index >= len(scenes):
+            raise ValueError(f"Scene index {scene_index} out of range")
+
+        # Always lock a face for R2V so identity + lip-sync stay stable
+        concept = {
+            "title": "studio lead performer",
+            "style": (direction or plan.get("direction") or "")[:180],
+            "narrative": direction or plan.get("direction") or "",
+            "direction": direction or plan.get("direction") or "",
+        }
+        if not self.character_lock:
+            await self._ensure_character_lock(concept)
+        await self.ensure_identity_sheet(concept, allow_text_only=True)
+        plan["character"] = self._studio_character_line()
+        plan["character_lock"] = self.character_lock
+        plan["identity_sheet_url"] = self._studio_identity_url()
+
+        scene = scenes[scene_index]
+        audio_src = self.audio_path
+        if not audio_src or not Path(audio_src).is_file():
+            raise ValueError("No audio path on director")
+
+        session_dir = self.output_dir / "videos"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        scene["status"] = "rendering"
+        self._emit_progress(
+            self.PHASE_VIDEO,
+            int(10 + (scene_index / max(1, len(scenes))) * 80),
+            f"Rendering H3 scene {scene_index + 1}/{len(scenes)} ({scene.get('type')})",
+        )
+
+        # Align frames first, then slice audio to the *same* duration so lips
+        # don't drift when H3 snaps length to 5+17k.
+        fps = float(os.getenv("COMFY_H3_FPS", "24"))
+        gen_secs = min(14.5, max(3.0, float(scene.get("duration") or 8.0)))
+        frames = _h3_align_frames(max(5, int(round(gen_secs * fps))))
+        frames = min(frames, int(os.getenv("COMFY_H3_MAX_FRAMES", "362")))
+        frames = _h3_align_frames(frames)
+        aligned_secs = frames / fps
+
+        start_t = float(scene.get("start") or 0.0)
+        audio_slice = session_dir / f"studio_audio_{scene_index:02d}.wav"
+        self._slice_audio(
+            audio_src,
+            audio_slice,
+            start_t,
+            aligned_secs,
+            sample_rate="44100",
+            channels="2",
+            normalize=False,
+        )
+
+        still: Optional[str] = None
+        stype = str(scene.get("type") or "")
+        if stype != "INTRO_BROLL":
+            if self.identity_sheet_path and Path(self.identity_sheet_path).is_file():
+                still = self.identity_sheet_path
+            elif self.reference_images:
+                for ref in self.reference_images:
+                    if ref and Path(ref).is_file():
+                        still = ref
+                        break
+
+        prompt = str(scene.get("prompt") or "").strip()
+        character = plan.get("character_lock") or plan.get("character") or ""
+        if character and character.lower() not in prompt.lower():
+            prompt = f"{character}. {prompt}"
+        if direction and direction.strip():
+            if direction.strip().lower() not in prompt.lower():
+                prompt = f"{direction.strip()}. {prompt}"
+        if stype == "PERF":
+            prompt = (
+                f"{prompt} Mouth clearly visible; lips precisely match <Audio 1> phonemes."
+            )
+
+        if self._video_seed_base is None:
+            self._video_seed_base = int(time.time()) % (2**31)
+        # Tiny per-scene offset keeps motion variety without abandoning identity lock
+        seed = self._video_seed_base + scene_index
+
+        width = int(os.getenv("COMFY_H3_WIDTH", "768"))
+        height = int(os.getenv("COMFY_H3_HEIGHT", "448"))
+
+        if self.use_home_agent_video or self.pipeline_video == "home_agent":
+            video_path = await self._render_h3_via_home_agent(
+                prompt=prompt,
+                audio_path=str(audio_slice),
+                image_path=still,
+                num_frames=frames,
+                seed=seed,
+                duration=aligned_secs,
+                width=width,
+                height=height,
+                scene_index=scene_index,
+            )
+        else:
+            video_path = await self.comfyui.generate_video_h3(
+                prompt=prompt,
+                audio_path=str(audio_slice),
+                image_path=still,
+                num_frames=frames,
+                seed=seed,
+                duration=aligned_secs,
+                width=width,
+                height=height,
+            )
+
+        if not video_path or not Path(video_path).is_file():
+            scene["status"] = "failed"
+            plan_path = self.output_dir / "timeline_plan.json"
+            plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+            raise RuntimeError(f"H3 render failed for scene {scene_index}")
+
+        dest = session_dir / f"studio_{scene_index:02d}.mp4"
+        shutil.copy(video_path, dest)
+        session_id = self.output_dir.name
+        scene["status"] = "ready"
+        scene["video_path"] = str(dest)
+        scene["video_url"] = f"/api/session/{session_id}/asset/video/{dest.name}"
+        scene["audio_aligned_secs"] = round(aligned_secs, 3)
+        scene["rendered_at"] = time.time()
+        scene["video_source"] = (
+            "home_agent"
+            if (self.use_home_agent_video or self.pipeline_video == "home_agent")
+            else self.comfy_backend
+        )
+        plan_path = self.output_dir / "timeline_plan.json"
+        plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+        self.timeline_plan = plan
+        return scene
+
+    async def _render_h3_via_home_agent(
+        self,
+        *,
+        prompt: str,
+        audio_path: str,
+        image_path: Optional[str],
+        num_frames: int,
+        seed: int,
+        duration: float,
+        width: int,
+        height: int,
+        scene_index: int,
+    ) -> Optional[str]:
+        """Ask Playground Home Agent to run MiniMax H3 and return a clip."""
+        if not self.home_agent_url or not self.home_agent_password:
+            raise RuntimeError("Home Agent URL/password required for H3 via Home Agent")
+
+        from server.home_agent.client import HomeAgentClient
+        from server.home_agent.jobs import encode_local_images, run_media_job
+
+        out_dir = self.output_dir / "videos" / "ha_raw"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        client = HomeAgentClient(
+            self.home_agent_url,
+            self.home_agent_password,
+            timeout=float(os.getenv("HOME_AGENT_TIMEOUT", "600")),
+        )
+        refs = [image_path] if image_path else None
+        images = encode_local_images(refs, limit=1)
+        # Attach short audio as a second "image-like" payload when protocol allows;
+        # also pass path hint in extras for agents that can read shared storage.
+        extras: Dict[str, Any] = {
+            "workflow": "minimax_h3_r2v",
+            "num_frames": num_frames,
+            "duration_secs": duration,
+            "width": width,
+            "height": height,
+            "seed": seed,
+            "scene_index": scene_index,
+            "audio_path_hint": audio_path,
+            "require_video_attachment": True,
+        }
+        audio_file = Path(audio_path)
+        if audio_file.is_file() and audio_file.stat().st_size < 4_000_000:
+            import base64
+
+            images = list(images or [])
+            images.append(
+                {
+                    "mime": "audio/wav",
+                    "data_base64": base64.b64encode(audio_file.read_bytes()).decode(
+                        "ascii"
+                    ),
+                    "filename": audio_file.name,
+                }
+            )
+
+        result = await run_media_job(
+            client,
+            job_type="h3_r2v",
+            prompt=prompt,
+            dest_dir=out_dir,
+            extras=extras,
+            images=images or None,
+            wait_timeout=float(os.getenv("HOME_AGENT_TIMEOUT", "600")),
+        )
+        saved = result.get("saved_paths") or []
+        for path in saved:
+            if str(path).lower().endswith((".mp4", ".webm", ".mov")):
+                return str(path)
+        if saved:
+            return str(saved[0])
+        LOG.warning(
+            "Home Agent H3 job produced no video (reply=%r)",
+            (result.get("reply_text") or "")[:240],
+        )
+        return None
+
+    async def render_studio_all(
+        self,
+        direction: str,
+        *,
+        rebuild_plan: bool = True,
+    ) -> Dict[str, Any]:
+        """Plan (optional) + render every H3 scene, then assemble final MP4."""
+        if rebuild_plan or not getattr(self, "timeline_plan", None):
+            await self.build_studio_timeline_plan(direction, lock_identity=True)
+        else:
+            concept = {
+                "title": "studio lead performer",
+                "style": direction[:180],
+                "narrative": direction,
+                "direction": direction,
+            }
+            if not self.character_lock:
+                await self._ensure_character_lock(concept)
+            await self.ensure_identity_sheet(concept, allow_text_only=True)
+
+        plan = self.timeline_plan
+        if plan is not None:
+            plan["review_status"] = "rendering"
+        scenes = plan.get("scenes") or []
+        for i in range(len(scenes)):
+            if scenes[i].get("status") == "ready" and scenes[i].get("video_path"):
+                continue
+            try:
+                await self.render_studio_scene(i, plan=plan, direction=direction)
+            except Exception as exc:
+                LOG.warning("Studio scene %d failed: %s", i, exc)
+                scenes[i]["status"] = "failed"
+                scenes[i]["error"] = str(exc)
+
+        ready = [s for s in scenes if s.get("status") == "ready" and s.get("video_path")]
+        if not ready:
+            raise RuntimeError("No H3 scenes rendered successfully")
+
+        final_path = await self.assemble_studio_final()
+        if plan is not None:
+            plan["review_status"] = "complete"
+        return {
+            "timeline_plan": plan,
+            "final_video_path": final_path,
+            "ready_count": len(ready),
+            "scene_count": len(scenes),
+        }
+
+    async def assemble_studio_final(self) -> str:
+        """Concat ready studio scenes and mux the original master MP3."""
+        plan = getattr(self, "timeline_plan", None)
+        if not plan:
+            plan_path = self.output_dir / "timeline_plan.json"
+            if plan_path.is_file():
+                plan = json.loads(plan_path.read_text(encoding="utf-8"))
+                self.timeline_plan = plan
+        if not plan:
+            raise ValueError("No timeline plan to assemble")
+
+        audio_src = self.audio_path
+        if not audio_src or not Path(audio_src).is_file():
+            raise ValueError("No audio for final mux")
+
+        specs: List[Dict[str, Any]] = []
+        for scene in plan.get("scenes") or []:
+            path = scene.get("video_path")
+            if not path or not Path(path).is_file():
+                continue
+            specs.append(
+                {
+                    "path": path,
+                    "duration": float(scene.get("duration") or 0),
+                    "start": float(scene.get("start") or 0),
+                    # Trim/pad to exact lyric window — never whole-song loop
+                    "fill_mode": "freeze",
+                }
+            )
+        if not specs:
+            raise RuntimeError("No rendered studio clips to assemble")
+
+        # Mirror into storyboard so assemble_final_video can use rich specs
+        self.storyboard = [
+            {
+                "id": f"studio_{i:02d}",
+                "timestamp": s["start"],
+                "duration": s["duration"],
+                "target_duration": s["duration"],
+                "video_path": s["path"],
+                "shot_type": "avatar",
+                "fill_mode": "freeze",
+            }
+            for i, s in enumerate(specs)
+        ]
+        return await self.assemble_final_video(specs, audio_src)
 
     # ── Phase 7: Final Assembly ──────────────────────────────────────
 
