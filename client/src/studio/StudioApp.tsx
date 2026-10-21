@@ -23,17 +23,20 @@ import {
   getStoredTheme,
   type ThemeId,
 } from "../brand";
-import type { ComfyBackend, StudioScene, TimelinePlan } from "./types";
+import type { StudioScene, TimelinePlan } from "./types";
 import {
   PIPELINE_PRESETS,
+  VIDEO_MODEL_OPTIONS,
   comfyBackendFromVideo,
   needsComfyUrl,
+  needsFalKey,
   needsHomeAgent,
   type PipelineDirector,
   type PipelineLanes,
   type PipelinePresetId,
   type PipelineStills,
   type PipelineVideo,
+  type VideoModel,
 } from "./pipeline";
 
 interface Props {
@@ -100,11 +103,15 @@ export function StudioApp({ serverHealth }: Props) {
   const [lyrics, setLyrics] = useState("");
   const [trackTitle, setTrackTitle] = useState("");
   const [duration, setDuration] = useState(0);
-  const [comfyBackend, setComfyBackend] = useState<ComfyBackend>("cloud");
   const [comfyUrl, setComfyUrl] = useState(
     () => localStorage.getItem("scenemux-comfy-url") || "http://192.168.4.34:8188"
   );
   const [theme, setTheme] = useState<ThemeId>(() => getStoredTheme());
+  const [uiMode, setUiMode] = useState<"simple" | "advanced">(() =>
+    localStorage.getItem("scenemux-ui-mode") === "advanced"
+      ? "advanced"
+      : "simple"
+  );
   const [pipelinePreset, setPipelinePreset] =
     useState<PipelinePresetId>("cloud");
   const [pipelineDirector, setPipelineDirector] =
@@ -113,6 +120,7 @@ export function StudioApp({ serverHealth }: Props) {
     useState<PipelineStills>("comfy");
   const [pipelineVideo, setPipelineVideo] =
     useState<PipelineVideo>("comfy_cloud");
+  const [videoModel, setVideoModel] = useState<VideoModel>("minimax-h3");
   const [homeAgentUrl, setHomeAgentUrl] = useState(
     () => localStorage.getItem("scenemux-ha-url") || "http://192.168.4.34:8777"
   );
@@ -162,15 +170,27 @@ export function StudioApp({ serverHealth }: Props) {
       pipeline_director: pipelineDirector,
       pipeline_stills: pipelineStills,
       pipeline_video: pipelineVideo,
+      video_model: videoModel,
     }),
-    [pipelineDirector, pipelineStills, pipelineVideo]
+    [pipelineDirector, pipelineStills, pipelineVideo, videoModel]
   );
 
-  const h3Ready = useMemo(() => {
+  const engineHealth = useMemo(() => {
     const vm = serverHealth?.services?.comfyui?.video_models;
-    if (!vm || comfyBackend === "cloud") return null;
-    return Boolean(vm["minimax-h3"]?.ready);
-  }, [serverHealth, comfyBackend]);
+    const fal = serverHealth?.services?.fal;
+    const local = pipelineVideo === "comfy_local";
+    let falReady: boolean | null = null;
+    if (fal?.status === "unconfigured") falReady = false;
+    else if (fal) falReady = Boolean(fal.ready);
+    return {
+      h3: local ? (vm ? Boolean(vm["minimax-h3"]?.ready) : null) : null,
+      fasth3: local ? (vm ? Boolean(vm.fasth3?.ready) : null) : null,
+      ltx23: local ? (vm ? Boolean(vm.ltx23?.ready) : null) : null,
+      fal: falReady,
+    };
+  }, [serverHealth, pipelineVideo]);
+
+  const h3Ready = engineHealth.h3;
 
   const cloudOk = useMemo(() => {
     if (pipelineVideo !== "comfy_cloud") return true;
@@ -180,6 +200,11 @@ export function StudioApp({ serverHealth }: Props) {
     );
   }, [serverHealth, pipelineVideo]);
 
+  const falOk = useMemo(() => {
+    if (pipelineVideo !== "fal" && pipelineStills !== "fal") return true;
+    return Boolean(serverHealth?.services?.fal?.ready);
+  }, [serverHealth, pipelineVideo, pipelineStills]);
+
   const applyPreset = useCallback((id: PipelinePresetId) => {
     setPipelinePreset(id);
     const preset = PIPELINE_PRESETS.find((p) => p.id === id);
@@ -187,12 +212,13 @@ export function StudioApp({ serverHealth }: Props) {
     setPipelineDirector(preset.lanes.pipeline_director);
     setPipelineStills(preset.lanes.pipeline_stills);
     setPipelineVideo(preset.lanes.pipeline_video);
-    setComfyBackend(comfyBackendFromVideo(preset.lanes.pipeline_video));
+    setVideoModel(preset.lanes.video_model);
   }, []);
 
   const sessionConfig = useCallback(
     () => ({
-      video_backend: "minimax-h3" as const,
+      video_backend: videoModel,
+      video_model: videoModel,
       lyrics,
       creative_direction: direction,
       project_mode: "mtv" as const,
@@ -229,6 +255,7 @@ export function StudioApp({ serverHealth }: Props) {
       pipelinePreset,
       pipelineStills,
       pipelineVideo,
+      videoModel,
     ]
   );
 
@@ -367,6 +394,12 @@ export function StudioApp({ serverHealth }: Props) {
       );
       return false;
     }
+    if (needsFalKey(lanes) && !falOk) {
+      setError(
+        "FAL is an optional draft cloud — get a key at https://fal.ai/dashboard/keys, add FAL_KEY to .env, restart the API. Not required for Cloud or Playground presets."
+      );
+      return false;
+    }
     if (needsHomeAgent(lanes) && (!homeAgentUrl.trim() || !homeAgentPassword)) {
       setError("Home Agent URL and password are required for the selected lanes.");
       return false;
@@ -379,16 +412,39 @@ export function StudioApp({ serverHealth }: Props) {
       setError("Comfy URL is required for Playground / local Comfy lanes.");
       return false;
     }
-    if (pipelineVideo === "comfy_local" && h3Ready === false) {
-      setError(
-        "Local Comfy is missing MiniMax H3 weights. Switch to Cloud or install them."
-      );
-      return false;
+    if (pipelineVideo === "comfy_local") {
+      const needsH3 =
+        videoModel === "minimax-h3" ||
+        videoModel === "hybrid_fast" ||
+        videoModel === "hybrid_ltx";
+      const needsFast = videoModel === "fasth3" || videoModel === "hybrid_fast";
+      const needsLtx = videoModel === "ltx23" || videoModel === "hybrid_ltx";
+      if (needsH3 && h3Ready === false && !needsFast && !needsLtx) {
+        setError(
+          "Local Comfy is missing MiniMax H3 Ref2VA weights. Switch engine or install them."
+        );
+        return false;
+      }
+      if (videoModel === "fasth3" && engineHealth.fasth3 === false) {
+        setError(
+          "Local Comfy is missing FastH3 weights. Install FastVideo FastH3 or switch preset."
+        );
+        return false;
+      }
+      if (videoModel === "ltx23" && engineHealth.ltx23 === false) {
+        setError(
+          "Local Comfy is missing LTX-2.3 weights. Install LTX or switch preset."
+        );
+        return false;
+      }
     }
     return true;
   }, [
     cloudOk,
     comfyUrl,
+    engineHealth.fasth3,
+    engineHealth.ltx23,
+    falOk,
     h3Ready,
     hermesUrl,
     homeAgentPassword,
@@ -396,6 +452,7 @@ export function StudioApp({ serverHealth }: Props) {
     lanes,
     pipelineDirector,
     pipelineVideo,
+    videoModel,
   ]);
 
   const importAudio = useCallback(
@@ -913,7 +970,9 @@ export function StudioApp({ serverHealth }: Props) {
     !locked &&
     (pipelineVideo === "comfy_cloud"
       ? cloudOk
-      : pipelineVideo === "home_agent" || h3Ready !== false);
+      : pipelineVideo === "fal"
+        ? falOk
+        : pipelineVideo === "home_agent" || h3Ready !== false);
 
   const canRenderFull =
     Boolean(plan?.scenes?.length) &&
@@ -940,6 +999,30 @@ export function StudioApp({ serverHealth }: Props) {
           </div>
 
           <div className="header-controls">
+            <div className="engine-toggle" role="group" aria-label="UI mode">
+              <button
+                type="button"
+                className="studio-chip"
+                aria-pressed={uiMode === "simple"}
+                onClick={() => {
+                  setUiMode("simple");
+                  localStorage.setItem("scenemux-ui-mode", "simple");
+                }}
+              >
+                Simple
+              </button>
+              <button
+                type="button"
+                className="studio-chip"
+                aria-pressed={uiMode === "advanced"}
+                onClick={() => {
+                  setUiMode("advanced");
+                  localStorage.setItem("scenemux-ui-mode", "advanced");
+                }}
+              >
+                Advanced
+              </button>
+            </div>
             <div className="engine-toggle" role="group" aria-label="Theme">
               {THEMES.map((t) => (
                 <button
@@ -954,7 +1037,11 @@ export function StudioApp({ serverHealth }: Props) {
               ))}
             </div>
             <div className="engine-toggle" role="group" aria-label="Pipeline preset">
-              {PIPELINE_PRESETS.filter((p) => p.id !== "custom").map((p) => (
+              {PIPELINE_PRESETS.filter((p) => {
+                if (p.id === "custom") return false;
+                if (uiMode === "simple") return Boolean(p.simple);
+                return true;
+              }).map((p) => (
                 <button
                   key={p.id}
                   type="button"
@@ -1162,82 +1249,290 @@ export function StudioApp({ serverHealth }: Props) {
 
             <section className="ha-row studio-panel" aria-label="Pipeline routing">
               <div className="ha-row-head">
-                <h2 className="studio-label !mb-0">Pipeline routing</h2>
+                <h2 className="studio-label !mb-0">
+                  {uiMode === "simple" ? "Preset" : "Pipeline routing"}
+                </h2>
                 <p className="brand-sub">
                   {PIPELINE_PRESETS.find((p) => p.id === pipelinePreset)?.hint ||
                     "Custom lanes"}
                 </p>
               </div>
               <p className="identity-hint">
-                Choose who runs director chat, storyboard stills, and H3 video.
-                SceneMux always slices audio and stitches the final cut.
+                {uiMode === "simple"
+                  ? "Pick a preset. SceneMux always slices audio and stitches the final cut."
+                  : "Choose director, stills host, video host, and engine. SceneMux always slices audio and stitches the final cut."}
               </p>
 
-              <div className="pipeline-lanes">
-                <label className="pipeline-lane">
-                  <span>Director</span>
-                  <select
-                    className="studio-field"
-                    value={pipelineDirector}
-                    onChange={(e) => {
-                      setPipelinePreset("custom");
-                      setPipelineDirector(e.target.value as PipelineDirector);
-                    }}
-                  >
-                    <option value="cloud_llm">Cloud LLM</option>
-                    <option value="home_agent">Home Agent</option>
-                    <option value="hermes">Hermes Agent</option>
-                  </select>
-                </label>
-                <label className="pipeline-lane">
-                  <span>Stills</span>
-                  <select
-                    className="studio-field"
-                    value={pipelineStills}
-                    onChange={(e) => {
-                      setPipelinePreset("custom");
-                      setPipelineStills(e.target.value as PipelineStills);
-                    }}
-                  >
-                    <option value="comfy">Comfy</option>
-                    <option value="home_agent">Home Agent</option>
-                  </select>
-                </label>
-                <label className="pipeline-lane">
-                  <span>Video (H3)</span>
-                  <select
-                    className="studio-field"
-                    value={pipelineVideo}
-                    onChange={(e) => {
-                      const next = e.target.value as PipelineVideo;
-                      setPipelinePreset("custom");
-                      setPipelineVideo(next);
-                      setComfyBackend(comfyBackendFromVideo(next));
-                    }}
-                  >
-                    <option value="comfy_cloud">Comfy Cloud</option>
-                    <option value="comfy_local">Playground / LAN Comfy</option>
-                    <option value="home_agent">Home Agent</option>
-                  </select>
-                </label>
-              </div>
-
-              {(needsComfyUrl(lanes) ||
-                pipelineStills === "comfy" ||
-                pipelineVideo === "comfy_local") && (
-                <input
-                  className="studio-field"
-                  value={comfyUrl}
-                  onChange={(e) => {
-                    setComfyUrl(e.target.value);
-                    localStorage.setItem("scenemux-comfy-url", e.target.value);
-                  }}
-                  aria-label="Comfy URL"
-                  placeholder="http://192.168.4.34:8188"
-                />
+              {uiMode === "simple" && (
+                <p className="engine-chips" aria-label="Active engine">
+                  <span className="engine-chip">
+                    {VIDEO_MODEL_OPTIONS.find((o) => o.id === videoModel)?.label ||
+                      videoModel}
+                  </span>
+                  {scenes.length > 0 && (
+                    <span className="engine-chip muted">
+                      {readyCount} of {scenes.length} scenes
+                      {duration > 0
+                        ? ` · ~${Math.max(1, Math.round((remainingCount || scenes.length) * 4))} min est.`
+                        : ""}
+                    </span>
+                  )}
+                </p>
               )}
 
-              {(needsHomeAgent(lanes) || pipelinePreset !== "cloud") && (
+              {uiMode === "advanced" && (
+                <>
+                  <div className="pipeline-lanes">
+                    <label className="pipeline-lane">
+                      <span>Director</span>
+                      <select
+                        className="studio-field"
+                        value={pipelineDirector}
+                        onChange={(e) => {
+                          setPipelinePreset("custom");
+                          setPipelineDirector(e.target.value as PipelineDirector);
+                        }}
+                      >
+                        <option value="cloud_llm">Cloud LLM</option>
+                        <option value="home_agent">Home Agent</option>
+                        <option value="hermes">Hermes Agent</option>
+                      </select>
+                    </label>
+                    <label className="pipeline-lane">
+                      <span>Stills</span>
+                      <select
+                        className="studio-field"
+                        value={pipelineStills}
+                        onChange={(e) => {
+                          setPipelinePreset("custom");
+                          setPipelineStills(e.target.value as PipelineStills);
+                        }}
+                      >
+                        <option value="comfy">Comfy</option>
+                        <option value="home_agent">Home Agent</option>
+                        <option value="fal">FAL (draft)</option>
+                      </select>
+                    </label>
+                    <label className="pipeline-lane">
+                      <span>Video host</span>
+                      <select
+                        className="studio-field"
+                        value={pipelineVideo}
+                        onChange={(e) => {
+                          const next = e.target.value as PipelineVideo;
+                          setPipelinePreset("custom");
+                          setPipelineVideo(next);
+                        }}
+                      >
+                        <option value="comfy_cloud">Comfy Cloud</option>
+                        <option value="comfy_local">Playground / LAN Comfy</option>
+                        <option value="home_agent">Home Agent</option>
+                        <option value="fal">FAL (draft)</option>
+                      </select>
+                    </label>
+                    <label className="pipeline-lane">
+                      <span>Video engine</span>
+                      <select
+                        className="studio-field"
+                        value={videoModel}
+                        onChange={(e) => {
+                          setPipelinePreset("custom");
+                          setVideoModel(e.target.value as VideoModel);
+                        }}
+                      >
+                        {VIDEO_MODEL_OPTIONS.map((o) => (
+                          <option key={o.id} value={o.id} title={o.hint}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <p className="engine-chips" aria-label="Engine health">
+                    <span
+                      className={`engine-chip ${
+                        engineHealth.h3 === true
+                          ? "ok"
+                          : engineHealth.h3 === false
+                            ? "bad"
+                            : ""
+                      }`}
+                    >
+                      H3 {engineHealth.h3 == null ? "—" : engineHealth.h3 ? "ready" : "missing"}
+                    </span>
+                    <span
+                      className={`engine-chip ${
+                        engineHealth.fasth3 === true
+                          ? "ok"
+                          : engineHealth.fasth3 === false
+                            ? "bad"
+                            : ""
+                      }`}
+                    >
+                      FastH3{" "}
+                      {engineHealth.fasth3 == null
+                        ? "—"
+                        : engineHealth.fasth3
+                          ? "ready"
+                          : "missing"}
+                    </span>
+                    <span
+                      className={`engine-chip ${
+                        engineHealth.ltx23 === true
+                          ? "ok"
+                          : engineHealth.ltx23 === false
+                            ? "bad"
+                            : ""
+                      }`}
+                    >
+                      LTX{" "}
+                      {engineHealth.ltx23 == null
+                        ? "—"
+                        : engineHealth.ltx23
+                          ? "ready"
+                          : "missing"}
+                    </span>
+                    <span
+                      className={`engine-chip ${
+                        engineHealth.fal === true
+                          ? "ok"
+                          : engineHealth.fal === false
+                            ? "bad"
+                            : ""
+                      }`}
+                      title={
+                        engineHealth.fal
+                          ? "FAL_KEY present — optional free-tier draft host"
+                          : "Optional draft host. Get a key at fal.ai/dashboard/keys, set FAL_KEY in .env, restart API. Not needed for Cloud/Playground."
+                      }
+                    >
+                      FAL{" "}
+                      {engineHealth.fal == null
+                        ? "—"
+                        : engineHealth.fal
+                          ? "keyed"
+                          : "no key"}
+                    </span>
+                  </p>
+
+                  {(needsComfyUrl(lanes) ||
+                    pipelineStills === "comfy" ||
+                    pipelineVideo === "comfy_local") && (
+                    <input
+                      className="studio-field"
+                      value={comfyUrl}
+                      onChange={(e) => {
+                        setComfyUrl(e.target.value);
+                        localStorage.setItem("scenemux-comfy-url", e.target.value);
+                      }}
+                      aria-label="Comfy URL"
+                      placeholder="http://192.168.4.34:8188"
+                    />
+                  )}
+
+                  {(needsHomeAgent(lanes) || pipelinePreset !== "cloud") && (
+                    <div className="ha-fields">
+                      <input
+                        className="studio-field"
+                        value={homeAgentUrl}
+                        onChange={(e) => setHomeAgentUrl(e.target.value)}
+                        aria-label="Home Agent URL"
+                        placeholder="http://192.168.4.34:8777"
+                      />
+                      <input
+                        className="studio-field"
+                        type="password"
+                        value={homeAgentPassword}
+                        onChange={(e) => setHomeAgentPassword(e.target.value)}
+                        aria-label="Home Agent password"
+                        placeholder="LAN password"
+                        autoComplete="off"
+                      />
+                      <button
+                        type="button"
+                        className="studio-btn studio-btn-ghost"
+                        disabled={haTesting || !homeAgentUrl.trim()}
+                        onClick={handleDiagnoseHomeAgent}
+                      >
+                        {haTesting ? "Checking…" : "Diagnose"}
+                      </button>
+                      <button
+                        type="button"
+                        className="studio-btn studio-btn-ghost"
+                        disabled={
+                          haTesting || !homeAgentUrl.trim() || !homeAgentPassword
+                        }
+                        onClick={handleTestHomeAgent}
+                      >
+                        {haTesting ? "Testing…" : "Test"}
+                      </button>
+                    </div>
+                  )}
+
+                  {pipelineDirector === "hermes" && (
+                    <div className="ha-fields">
+                      <input
+                        className="studio-field"
+                        value={hermesUrl}
+                        onChange={(e) => {
+                          setHermesUrl(e.target.value);
+                          localStorage.setItem(
+                            "scenemux-hermes-url",
+                            e.target.value
+                          );
+                        }}
+                        aria-label="Hermes URL"
+                        placeholder="http://127.0.0.1:8642"
+                      />
+                      <input
+                        className="studio-field"
+                        type="password"
+                        value={hermesToken}
+                        onChange={(e) => setHermesToken(e.target.value)}
+                        aria-label="Hermes token"
+                        placeholder="Optional token"
+                        autoComplete="off"
+                      />
+                    </div>
+                  )}
+
+                  {needsFalKey(lanes) && !falOk && (
+                    <div className="credit-note warn" role="status">
+                      <p>
+                        <strong>FAL</strong> is an optional free-tier cloud for
+                        draft stills/clips. SceneMux still slices your song and
+                        muxes the final cut. It is{" "}
+                        <strong>not required</strong> for Cloud or Playground
+                        presets.
+                      </p>
+                      <ol className="fal-setup-steps">
+                        <li>
+                          Create a key at{" "}
+                          <a
+                            href="https://fal.ai/dashboard/keys"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            fal.ai/dashboard/keys
+                          </a>
+                        </li>
+                        <li>
+                          Add <code>FAL_KEY=…</code> to <code>.env</code> (never
+                          commit it)
+                        </li>
+                        <li>Restart the API, then re-select FAL here</li>
+                      </ol>
+                      <p className="drop-hint">
+                        Free quota only — keep Comfy Cloud / Playground for
+                        production lip sync.
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {uiMode === "simple" && needsHomeAgent(lanes) && (
                 <div className="ha-fields">
                   <input
                     className="studio-field"
@@ -1255,49 +1550,19 @@ export function StudioApp({ serverHealth }: Props) {
                     placeholder="LAN password"
                     autoComplete="off"
                   />
-                  <button
-                    type="button"
-                    className="studio-btn studio-btn-ghost"
-                    disabled={haTesting || !homeAgentUrl.trim()}
-                    onClick={handleDiagnoseHomeAgent}
-                  >
-                    {haTesting ? "Checking…" : "Diagnose"}
-                  </button>
-                  <button
-                    type="button"
-                    className="studio-btn studio-btn-ghost"
-                    disabled={
-                      haTesting || !homeAgentUrl.trim() || !homeAgentPassword
-                    }
-                    onClick={handleTestHomeAgent}
-                  >
-                    {haTesting ? "Testing…" : "Test"}
-                  </button>
                 </div>
               )}
-
-              {pipelineDirector === "hermes" && (
-                <div className="ha-fields">
-                  <input
-                    className="studio-field"
-                    value={hermesUrl}
-                    onChange={(e) => {
-                      setHermesUrl(e.target.value);
-                      localStorage.setItem("scenemux-hermes-url", e.target.value);
-                    }}
-                    aria-label="Hermes URL"
-                    placeholder="http://127.0.0.1:8642"
-                  />
-                  <input
-                    className="studio-field"
-                    type="password"
-                    value={hermesToken}
-                    onChange={(e) => setHermesToken(e.target.value)}
-                    aria-label="Hermes token"
-                    placeholder="Optional token"
-                    autoComplete="off"
-                  />
-                </div>
+              {uiMode === "simple" && needsComfyUrl(lanes) && (
+                <input
+                  className="studio-field"
+                  value={comfyUrl}
+                  onChange={(e) => {
+                    setComfyUrl(e.target.value);
+                    localStorage.setItem("scenemux-comfy-url", e.target.value);
+                  }}
+                  aria-label="Comfy URL"
+                  placeholder="http://192.168.4.34:8188"
+                />
               )}
               {haStatus && <p className="ha-status">{haStatus}</p>}
             </section>

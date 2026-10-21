@@ -194,12 +194,14 @@ def _hydrate_director(director: HermesDirector, session: Dict[str, Any]) -> None
         director.singer_profile = session["singer_profile"]
     if session.get("video_backend"):
         director.video_backend = session["video_backend"]
+    if session.get("video_model"):
+        director.video_model = session["video_model"]
     if session.get("performance_mix"):
         director.performance_mix = session["performance_mix"]
     director.project_mode = session.get("project_mode") or "mtv"
     comfy_backend = session.get("comfy_backend")
     comfy_url = session.get("comfy_url")
-    if comfy_backend == "cloud":
+    if comfy_backend == "cloud" and session.get("pipeline_video") != "fal":
         comfy_url = COMFY_CLOUD_URL
         session["comfy_url"] = COMFY_CLOUD_URL
     if comfy_backend and (
@@ -228,6 +230,9 @@ def _hydrate_director(director: HermesDirector, session: Dict[str, Any]) -> None
         director=lanes["pipeline_director"],
         stills=lanes["pipeline_stills"],
         video=lanes["pipeline_video"],
+        video_model=lanes.get("video_model")
+        or session.get("video_model")
+        or "minimax-h3",
     )
     lyrics = (session.get("lyrics") or "").strip()
     if lyrics and isinstance(director.audio_analysis, dict):
@@ -325,6 +330,21 @@ async def health():
     except Exception as exc:
         services["comfyui"] = {"status": "down", "error": str(exc)}
 
+    # Optional FAL draft host
+    try:
+        from server.fal_client import FalClient, fal_configured
+
+        if fal_configured():
+            services["fal"] = await FalClient().health()
+        else:
+            services["fal"] = {
+                "status": "unconfigured",
+                "ready": False,
+                "note": "Set FAL_KEY for optional free-tier draft stills/clips",
+            }
+    except Exception as exc:
+        services["fal"] = {"status": "down", "ready": False, "error": str(exc)}
+
     # Check disk space
     import shutil
     disk = shutil.disk_usage(str(OUTPUT_DIR))
@@ -341,7 +361,7 @@ async def health():
         "services": services,
         "gpu": "cloud" if mode == "cloud" else "Intel Arc Pro B70",
         "vram_gb": None if mode == "cloud" else 32,
-        "version": "2.1.0",
+        "version": "2.2.0",
     }
 
 @app.get("/api/llm/status")
@@ -569,20 +589,40 @@ async def configure_session(request: dict):
             "look": str(singer.get("look") or "").strip()[:240],
             "framing": str(singer.get("framing") or "close-up on face and head").strip()[:80],
         }
-    backend = str(request.get("video_backend") or session.get("video_backend") or "infinitetalk")
-    backend = backend.strip().lower()
+    from server.pipeline import normalize_video_model
+
+    # Prefer explicit video_model; keep video_backend as legacy alias
+    video_model = normalize_video_model(
+        request.get("video_model")
+        or request.get("video_backend")
+        or session.get("video_model")
+        or session.get("video_backend")
+        or "minimax-h3"
+    )
+    backend = str(
+        request.get("video_backend") or session.get("video_backend") or video_model
+    ).strip().lower()
+    if backend in ("minimax_h3", "h3"):
+        backend = "minimax-h3"
+    # Studio engines map onto video_backend for older code paths
     if backend not in (
         "infinitetalk",
         "ltx23",
         "humo",
         "minimax-h3",
-        "minimax_h3",
-        "h3",
+        "fasth3",
+        "fast-h3",
+        "fast_h3",
     ):
-        backend = "infinitetalk"
-    if backend in ("minimax_h3", "h3"):
-        backend = "minimax-h3"
+        backend = video_model if video_model in (
+            "minimax-h3",
+            "ltx23",
+            "fasth3",
+        ) else "minimax-h3"
+    if backend in ("fast-h3", "fast_h3"):
+        backend = "fasth3"
     session["video_backend"] = backend
+    session["video_model"] = video_model
 
     # Optional pasted lyrics (overrides / supplements Whisper later)
     pasted = str(request.get("lyrics") or "").strip()
@@ -628,11 +668,12 @@ async def configure_session(request: dict):
     from server.pipeline import (
         comfy_backend_for_video,
         needs_comfy_url,
+        needs_fal_key,
         needs_home_agent,
         normalize_pipeline,
     )
 
-    # Optional named preset (cloud / playground / playground_agent / hybrid)
+    # Optional named preset (cloud / playground / hybrid_fast / fast_draft / …)
     if request.get("pipeline_preset"):
         from server.pipeline import apply_preset
 
@@ -641,14 +682,20 @@ async def configure_session(request: dict):
             request = {**request, **preset}
 
     lanes = normalize_pipeline(session, request)
+    # Prefer request video_model over preset when both present
+    if request.get("video_model"):
+        lanes["video_model"] = normalize_video_model(request.get("video_model"))
     session.update(lanes)
+    session["video_model"] = lanes.get("video_model") or video_model
     # Legacy boolean mirrors for older clients
     session["use_home_agent_llm"] = lanes["pipeline_director"] == "home_agent"
     session["use_home_agent_stills"] = lanes["pipeline_stills"] == "home_agent"
 
     comfy_backend = comfy_backend_for_video(lanes["pipeline_video"])
     # Stills via Comfy on a LAN box while video is cloud still needs a URL only for stills
-    if lanes["pipeline_stills"] == "comfy" and lanes["pipeline_video"] == "comfy_cloud":
+    if lanes["pipeline_video"] == "fal":
+        comfy_backend = "cloud"
+    elif lanes["pipeline_stills"] == "comfy" and lanes["pipeline_video"] == "comfy_cloud":
         comfy_backend = "cloud"
     elif lanes["pipeline_video"] == "comfy_local" or (
         lanes["pipeline_stills"] == "comfy" and lanes["pipeline_video"] == "home_agent"
@@ -689,7 +736,16 @@ async def configure_session(request: dict):
                 detail="Home Agent password required for the selected pipeline lanes",
             )
 
-    if comfy_backend == "cloud":
+    if needs_fal_key(lanes):
+        from server.fal_client import fal_configured
+
+        if not fal_configured():
+            raise HTTPException(
+                status_code=400,
+                detail="FAL selected but FAL_KEY is not set in .env",
+            )
+
+    if comfy_backend == "cloud" or lanes["pipeline_video"] == "fal":
         comfy_url = COMFY_CLOUD_URL.rstrip("/")
         if lanes["pipeline_video"] == "comfy_cloud" and not os.getenv(
             "COMFY_CLOUD_API_KEY"
@@ -698,6 +754,10 @@ async def configure_session(request: dict):
                 status_code=400,
                 detail="Comfy Cloud selected but COMFY_CLOUD_API_KEY is not set in .env",
             )
+        if lanes["pipeline_video"] == "fal":
+            # Still allow a local Comfy URL for stills when stills=comfy local
+            if lanes["pipeline_stills"] == "comfy" and request.get("comfy_url"):
+                comfy_url = str(request.get("comfy_url")).strip().rstrip("/")
     else:
         comfy_url = str(
             request.get("comfy_url") or session.get("comfy_url") or COMFYUI_URL
@@ -747,6 +807,7 @@ async def configure_session(request: dict):
         director.llm = llm_backend
     director.singer_profile = session.get("singer_profile") or {}
     director.video_backend = backend
+    director.video_model = session["video_model"]
     director.performance_mix = mix
     director.project_mode = session["project_mode"]
     director.configure_comfy(comfy_backend, comfy_url)
@@ -762,13 +823,15 @@ async def configure_session(request: dict):
         director=lanes["pipeline_director"],
         stills=lanes["pipeline_stills"],
         video=lanes["pipeline_video"],
+        video_model=session["video_model"],
     )
     LOG.info(
-        "Session %s pipeline dir=%s stills=%s video=%s comfy=%s (%s)",
+        "Session %s pipeline dir=%s stills=%s video=%s model=%s comfy=%s (%s)",
         session_id,
         lanes["pipeline_director"],
         lanes["pipeline_stills"],
         lanes["pipeline_video"],
+        session["video_model"],
         comfy_backend,
         director.comfy_url,
     )
@@ -778,6 +841,7 @@ async def configure_session(request: dict):
         "session_id": session_id,
         "singer_profile": session.get("singer_profile"),
         "video_backend": backend,
+        "video_model": session["video_model"],
         "performance_mix": mix,
         "project_mode": session["project_mode"],
         "comfy_backend": comfy_backend,
@@ -1480,8 +1544,15 @@ async def studio_plan(request: dict):
     director = _get_director(session_id)
     _hydrate_director(director, session)
     session["creative_direction"] = direction[:2000]
-    session["video_backend"] = "minimax-h3"
-    director.video_backend = "minimax-h3"
+    from server.pipeline import normalize_video_model
+
+    vm = normalize_video_model(
+        session.get("video_model") or session.get("video_backend") or "minimax-h3"
+    )
+    session["video_model"] = vm
+    session["video_backend"] = vm if vm in ("minimax-h3", "ltx23", "fasth3") else "minimax-h3"
+    director.video_backend = session["video_backend"]
+    director.video_model = vm
     lock_identity = bool(request.get("lock_identity", True))
     reset_identity = bool(request.get("reset_identity", False))
     if reset_identity:
@@ -1632,8 +1703,17 @@ async def studio_render(request: dict):
         if 0 <= idx < len(scenes) and item.get("prompt") is not None:
             scenes[idx]["prompt"] = str(item.get("prompt") or "")[:4000]
     session["creative_direction"] = direction[:2000]
-    session["video_backend"] = "minimax-h3"
-    director.video_backend = "minimax-h3"
+    from server.pipeline import normalize_video_model
+
+    vm = normalize_video_model(
+        session.get("video_model") or session.get("video_backend") or "minimax-h3"
+    )
+    session["video_model"] = vm
+    session["video_backend"] = (
+        vm if vm in ("minimax-h3", "ltx23", "fasth3") else "minimax-h3"
+    )
+    director.video_backend = session["video_backend"]
+    director.video_model = vm
     session["status"] = "studio_rendering"
 
     async def _run():
@@ -1841,26 +1921,53 @@ async def studio_estimate(request: dict):
         or request.get("pipeline_video")
         or "comfy_cloud"
     )
+    from server.pipeline import normalize_video_model
+
+    video_model = normalize_video_model(
+        (session or {}).get("video_model")
+        or request.get("video_model")
+        or "minimax-h3"
+    )
     n = len(remaining) if remaining else len(scenes)
-    # Rough heuristics
-    if video == "comfy_cloud":
-        per = "1 Comfy Cloud H3 job"
-        minutes = n * 4
+    # Rough heuristics by host + engine
+    if video == "fal":
+        per = "1 FAL draft clip"
+        minutes = n * 2
     elif video == "home_agent":
         per = "1 Home Agent H3 job"
         minutes = n * 8
+    elif video_model in ("fasth3", "hybrid_fast"):
+        per = (
+            "1 FastH3 draft (PERF→H3 Ref2VA if hybrid)"
+            if video_model == "hybrid_fast"
+            else "1 FastH3 8-step draft"
+        )
+        minutes = n * (3 if video == "comfy_cloud" else 4)
+    elif video_model in ("ltx23", "hybrid_ltx"):
+        per = (
+            "1 LTX IA2V (PERF→H3 Ref2VA if hybrid)"
+            if video_model == "hybrid_ltx"
+            else "1 LTX-2.3 IA2V job"
+        )
+        minutes = n * (3 if video == "comfy_cloud" else 5)
+    elif video == "comfy_cloud":
+        per = "1 Comfy Cloud H3 Ref2VA job"
+        minutes = n * 4
     else:
-        per = "1 local / Playground H3 job"
+        per = "1 local / Playground H3 Ref2VA job"
         minutes = n * 6
     return {
         "session_id": session_id,
         "scene_total": len(scenes),
         "scenes_to_render": n,
         "pipeline_video": video,
+        "video_model": video_model,
         "per_scene": per,
         "est_minutes_low": max(1, int(minutes * 0.6)),
         "est_minutes_high": max(2, int(minutes * 1.4)),
-        "note": "Estimates are approximate; queue load and clip length vary.",
+        "note": (
+            "Estimates are approximate. FastH3/LTX are drafts — not Ref2VA lip-sync quality."
+        ),
     }
 
 

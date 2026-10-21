@@ -121,8 +121,14 @@ class VidMuseAPI {
     use_home_agent_stills?: boolean;
     pipeline_preset?: string;
     pipeline_director?: "cloud_llm" | "home_agent" | "hermes";
-    pipeline_stills?: "comfy" | "home_agent";
-    pipeline_video?: "comfy_cloud" | "comfy_local" | "home_agent";
+    pipeline_stills?: "comfy" | "home_agent" | "fal";
+    pipeline_video?: "comfy_cloud" | "comfy_local" | "home_agent" | "fal";
+    video_model?:
+      | "minimax-h3"
+      | "ltx23"
+      | "fasth3"
+      | "hybrid_ltx"
+      | "hybrid_fast";
     hermes_url?: string;
     hermes_token?: string;
   }): Promise<any> {

@@ -8,7 +8,7 @@ This is **additive** to Comfy Cloud / Playground Comfy. Prefer **pipeline preset
 
 1. Enable Home Agent → Local web (port, password, **Allow LAN**).
 2. Note LAN URL (e.g. `http://192.168.4.34:8777`).
-3. For H3 weights on the same PC, also expose **ComfyUI** (often `:8188`) and use preset **Playground** or **Hybrid** (`pipeline_video=comfy_local`).
+3. For video weights on the same PC, also expose **ComfyUI** (often `:8188`) and use preset **Playground**, **Hybrid Fast**, or **Hybrid** (`pipeline_video=comfy_local`). Engines: H3 Ref2VA, FastH3, LTX — see [ENGINES.md](ENGINES.md).
 
 ### Firewall (Windows PowerShell Admin)
 
@@ -29,7 +29,11 @@ HOME_AGENT_TIMEOUT=300
 # HERMES_URL=http://127.0.0.1:8642
 # HERMES_TOKEN=
 # LLM_PROVIDER=hermes
+# Optional FAL free-tier drafts (Advanced UI — not required for Cloud/Playground):
+# Get a key: https://fal.ai/dashboard/keys
+# FAL_KEY=
 ```
+See [ENGINES.md](ENGINES.md) for FAL setup.
 
 ## API
 

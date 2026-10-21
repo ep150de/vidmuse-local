@@ -63,12 +63,23 @@ _DEFAULT_H3_CLIP = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 _DEFAULT_H3_VIDEO_VAE = "minimax_h3_video_vae_fp16.safetensors"
 _DEFAULT_H3_AUDIO_VAE = "minimax_h3_audio_vae_fp32.safetensors"
 _DEFAULT_H3_LIGHTNING_LORA = "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"
+# FastVideo FastH3 8-step distilled (I2V first/last + T2V only — no Ref2VA)
+_DEFAULT_FASTH3_UNET = "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors"
+_DEFAULT_FASTH3_VIDEO_VAE = "minimax_h3_video_vae_int8_convrot.safetensors"
 
 
 def _h3_align_frames(num_frames: int) -> int:
     """Align MiniMax H3 length to supported 5 + 17k frame counts (@24fps)."""
     n = max(5, int(num_frames))
     return n + (5 - (n % 17)) % 17
+
+
+def _ltx_align_frames(num_frames: int) -> int:
+    """Align LTX-2.3 length to 8n+1."""
+    length = max(9, int(num_frames))
+    if (length - 1) % 8 != 0:
+        length = ((length - 1) // 8) * 8 + 1
+    return length
 
 
 def _is_loopback_url(url: Optional[str]) -> bool:
@@ -1406,6 +1417,255 @@ class ComfyUIClient:
         )
         return workflow
 
+    def _build_fasth3_i2v_workflow(
+        self,
+        prompt: str,
+        num_frames: int = 124,
+        seed: Optional[int] = None,
+        width: int = 768,
+        height: int = 448,
+        image_name: Optional[str] = None,
+        last_image_name: Optional[str] = None,
+        audio_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """FastVideo FastH3 8-step I2V / T2V (no Ref2VA).
+
+        Matches Comfy ``video_fastvideo_fasth3_i2v``: MiniMaxH3ImageToVideo +
+        MiniMaxH3SigmaShift + BlockSparseAttention, 8-step simple scheduler.
+        CreateVideo muxes the **user** audio slice when provided (master-safe);
+        otherwise falls back to decoded model audio.
+        """
+        if seed is None:
+            seed = int(time.time()) % (2**32)
+
+        length = _h3_align_frames(num_frames)
+        length = min(length, int(os.getenv("COMFY_FASTH3_MAX_FRAMES", "362")))
+        length = _h3_align_frames(length)
+
+        width = max(64, (int(width) // 32) * 32)
+        height = max(64, (int(height) // 32) * 32)
+
+        unet = os.getenv("COMFY_FASTH3_UNET", _DEFAULT_FASTH3_UNET)
+        clip = os.getenv("COMFY_H3_CLIP", _DEFAULT_H3_CLIP)
+        video_vae = os.getenv(
+            "COMFY_FASTH3_VIDEO_VAE",
+            os.getenv("COMFY_H3_VIDEO_VAE", _DEFAULT_FASTH3_VIDEO_VAE),
+        )
+        audio_vae = os.getenv("COMFY_H3_AUDIO_VAE", _DEFAULT_H3_AUDIO_VAE)
+        weight_dtype = os.getenv("COMFY_FASTH3_WEIGHT_DTYPE", "default")
+        fps = float(os.getenv("COMFY_FASTH3_FPS", os.getenv("COMFY_H3_FPS", "24")))
+        steps = int(os.getenv("COMFY_FASTH3_STEPS", "8"))  # distilled: keep at 8
+        sampler_name = os.getenv("COMFY_FASTH3_SAMPLER", "res_multistep")
+        scheduler = os.getenv("COMFY_FASTH3_SCHEDULER", "simple")
+        sigma_video = float(os.getenv("COMFY_FASTH3_SIGMA_VIDEO", "10"))
+        sigma_audio = float(os.getenv("COMFY_FASTH3_SIGMA_AUDIO", "3"))
+        vsa_keep = float(os.getenv("COMFY_FASTH3_VSA_KEEP_PERCENT", "10"))
+        vsa_start = float(os.getenv("COMFY_FASTH3_VSA_START", "0.2"))
+        attention_backend = os.getenv(
+            "COMFY_FASTH3_ATTENTION", "comfy kitchen attention"
+        )
+
+        tagged = prompt.strip()
+        if not tagged:
+            tagged = "Cinematic music video motion, expressive performance."
+
+        workflow: Dict[str, Any] = {
+            "6": {
+                "inputs": {"unet_name": unet, "weight_dtype": weight_dtype},
+                "class_type": "UNETLoader",
+            },
+            "13": {
+                "inputs": {
+                    "clip_name": clip,
+                    "type": "minimax",
+                    "device": "default",
+                },
+                "class_type": "CLIPLoader",
+            },
+            "11": {
+                "inputs": {"vae_name": video_vae},
+                "class_type": "VAELoader",
+            },
+            "24": {
+                "inputs": {"vae_name": audio_vae},
+                "class_type": "VAELoader",
+            },
+            "143": {
+                "inputs": {
+                    "model": ["6", 0],
+                    "shift_video": sigma_video,
+                    "shift_audio": sigma_audio,
+                },
+                "class_type": "MiniMaxH3SigmaShift",
+            },
+            "128": {
+                "inputs": {
+                    "model": ["143", 0],
+                    "attention": attention_backend,
+                },
+                "class_type": "ModelAttentionBackend",
+            },
+            "127": {
+                "inputs": {
+                    "model": ["128", 0],
+                    "selection": "vsa",
+                    "keep_percent": vsa_keep,
+                    "start_percent": vsa_start,
+                    "end_percent": 1.0,
+                    "dense_blocks": "",
+                    "min_tokens": 12288,
+                    "extra_tokens": 256,
+                    "sink_conditioning": "exact_kv_and_rows",
+                    "verbose": False,
+                },
+                "class_type": "BlockSparseAttention",
+            },
+            "15": {
+                "inputs": {"noise_seed": seed},
+                "class_type": "RandomNoise",
+            },
+            "17": {
+                "inputs": {"sampler_name": sampler_name},
+                "class_type": "KSamplerSelect",
+            },
+            "9": {
+                "inputs": {
+                    "model": ["127", 0],
+                    "scheduler": scheduler,
+                    "steps": steps,
+                    "denoise": 1.0,
+                },
+                "class_type": "BasicScheduler",
+            },
+        }
+
+        i2v_inputs: Dict[str, Any] = {
+            "clip": ["13", 0],
+            "vae": ["11", 0],
+            "prompt": tagged,
+            "width": width,
+            "height": height,
+            "length": length,
+        }
+        if image_name:
+            workflow["1"] = {
+                "inputs": {"image": image_name},
+                "class_type": "LoadImage",
+            }
+            i2v_inputs["first_frame"] = ["1", 0]
+        if last_image_name:
+            workflow["3"] = {
+                "inputs": {"image": last_image_name},
+                "class_type": "LoadImage",
+            }
+            i2v_inputs["last_frame"] = ["3", 0]
+
+        workflow["104"] = {
+            "inputs": i2v_inputs,
+            "class_type": "MiniMaxH3ImageToVideo",
+        }
+        workflow["16"] = {
+            "inputs": {
+                "model": ["127", 0],
+                "conditioning": ["104", 0],
+            },
+            "class_type": "BasicGuider",
+        }
+        workflow["14"] = {
+            "inputs": {
+                "noise": ["15", 0],
+                "guider": ["16", 0],
+                "sampler": ["17", 0],
+                "sigmas": ["9", 0],
+                "latent_image": ["104", 1],
+            },
+            "class_type": "SamplerCustomAdvanced",
+        }
+        workflow["10"] = {
+            "inputs": {"samples": ["14", 0], "vae": ["11", 0]},
+            "class_type": "VAEDecode",
+        }
+
+        if audio_name:
+            workflow["2"] = {
+                "inputs": {"audio": audio_name},
+                "class_type": "LoadAudio",
+            }
+            create_audio: Any = ["2", 0]
+        else:
+            workflow["23"] = {
+                "inputs": {"samples": ["14", 0], "vae": ["24", 0]},
+                "class_type": "VAEDecodeAudio",
+            }
+            create_audio = ["23", 0]
+
+        workflow["91"] = {
+            "inputs": {
+                "images": ["10", 0],
+                "fps": fps,
+                "audio": create_audio,
+            },
+            "class_type": "CreateVideo",
+        }
+        workflow["92"] = {
+            "inputs": {
+                "video": ["91", 0],
+                "filename_prefix": "vidmuse_fasth3",
+                "format": "mp4",
+                "codec": "h264",
+            },
+            "class_type": "SaveVideo",
+        }
+        return workflow
+
+    async def generate_video_fasth3(
+        self,
+        prompt: str,
+        *,
+        audio_path: Optional[str] = None,
+        image_path: Optional[str] = None,
+        last_image_path: Optional[str] = None,
+        num_frames: int = 124,
+        seed: Optional[int] = None,
+        duration: Optional[float] = None,
+        width: int = 768,
+        height: int = 448,
+    ) -> Optional[str]:
+        """FastH3 draft clip: I2V (first/last) or T2V. Muxes user audio when given."""
+        fps = float(os.getenv("COMFY_FASTH3_FPS", os.getenv("COMFY_H3_FPS", "24")))
+        frames = num_frames
+        if duration is not None:
+            frames = max(5, int(round(float(duration) * fps)))
+        frames = _h3_align_frames(frames)
+        frames = min(frames, int(os.getenv("COMFY_FASTH3_MAX_FRAMES", "362")))
+        frames = _h3_align_frames(frames)
+
+        headers = self._headers()
+        async with aiohttp.ClientSession(headers=headers) as session:
+            image_name = None
+            last_name = None
+            audio_name = None
+            if image_path and Path(image_path).is_file():
+                image_name = await self._upload_input_file(session, image_path, "image")
+            if last_image_path and Path(last_image_path).is_file():
+                last_name = await self._upload_input_file(
+                    session, last_image_path, "image"
+                )
+            if audio_path and Path(audio_path).is_file():
+                audio_name = await self._upload_input_file(session, audio_path, "audio")
+
+        workflow = self._build_fasth3_i2v_workflow(
+            prompt=prompt,
+            num_frames=frames,
+            seed=seed,
+            width=width,
+            height=height,
+            image_name=image_name,
+            last_image_name=last_name,
+            audio_name=audio_name,
+        )
+        return await self._dispatch_workflow(workflow, wait_timeout=1200)
+
     async def generate_video_h3(
         self,
         prompt: str,
@@ -1726,6 +1986,26 @@ class ComfyUIClient:
                 height=out_h,
                 previous_image_name=prev_name,
             )
+        elif backend in ("fasth3", "fast-h3", "fast_h3", "fastvideo"):
+            fps = float(os.getenv("COMFY_FASTH3_FPS", os.getenv("COMFY_H3_FPS", "24")))
+            frames = num_frames
+            if duration is not None:
+                frames = max(5, int(round(float(duration) * fps)))
+            frames = _h3_align_frames(frames)
+            frames = min(frames, int(os.getenv("COMFY_FASTH3_MAX_FRAMES", "362")))
+            frames = _h3_align_frames(frames)
+            out_w = int(os.getenv("COMFY_H3_WIDTH", str(width if width >= 640 else 768)))
+            out_h = int(os.getenv("COMFY_H3_HEIGHT", str(height if height >= 360 else 448)))
+            workflow = self._build_fasth3_i2v_workflow(
+                prompt=prompt,
+                num_frames=frames,
+                seed=seed,
+                width=out_w,
+                height=out_h,
+                image_name=image_name,
+                last_image_name=prev_name,
+                audio_name=audio_name,
+            )
         elif backend in ("humo", "wan", "wan-humo"):
             fps = float(os.getenv("COMFY_HUMO_FPS", "25"))
             frames = num_frames
@@ -1746,14 +2026,32 @@ class ComfyUIClient:
                 width=min(width, 512),
                 height=min(height, 512),
             )
-        else:
+        elif backend in ("ltx23", "ltx-23", "ltx_23", "ltx", "ltx2.3"):
             fps = float(os.getenv("COMFY_LTX_FPS", "24"))
             frames = num_frames if duration is None else max(9, int(round(float(duration) * fps)))
-            if (frames - 1) % 8 != 0:
-                frames = ((frames - 1) // 8) * 8 + 1
+            frames = _ltx_align_frames(frames)
             frames = min(frames, int(os.getenv("COMFY_LTX_MAX_FRAMES", "97")))
-            if (frames - 1) % 8 != 0:
-                frames = ((frames - 1) // 8) * 8 + 1
+            frames = _ltx_align_frames(frames)
+            av_prompt = (
+                f"{prompt}, same character throughout, consistent face and outfit, "
+                f"cinematic music video, natural motion, audio-reactive performance"
+            )
+            workflow = self._build_ltx23_av_i2v_workflow(
+                image_name=image_name,
+                audio_name=audio_name,
+                prompt=av_prompt,
+                num_frames=frames,
+                seed=seed,
+                width=width,
+                height=height,
+            )
+        else:
+            print(f"[ComfyUI] Unknown video backend {backend!r}; trying LTX-2.3 IA2V")
+            fps = float(os.getenv("COMFY_LTX_FPS", "24"))
+            frames = num_frames if duration is None else max(9, int(round(float(duration) * fps)))
+            frames = _ltx_align_frames(frames)
+            frames = min(frames, int(os.getenv("COMFY_LTX_MAX_FRAMES", "97")))
+            frames = _ltx_align_frames(frames)
             av_prompt = (
                 f"{prompt}, same character throughout, consistent face and outfit, "
                 f"cinematic music video, natural motion, audio-reactive performance"
@@ -2892,6 +3190,11 @@ class ComfyUIClient:
         h3_clip = os.getenv("COMFY_H3_CLIP", _DEFAULT_H3_CLIP)
         h3_vvae = os.getenv("COMFY_H3_VIDEO_VAE", _DEFAULT_H3_VIDEO_VAE)
         h3_avae = os.getenv("COMFY_H3_AUDIO_VAE", _DEFAULT_H3_AUDIO_VAE)
+        fasth3_unet = os.getenv("COMFY_FASTH3_UNET", _DEFAULT_FASTH3_UNET)
+        fasth3_vvae = os.getenv(
+            "COMFY_FASTH3_VIDEO_VAE",
+            os.getenv("COMFY_H3_VIDEO_VAE", _DEFAULT_FASTH3_VIDEO_VAE),
+        )
         ltx_ckpt = os.getenv("COMFY_LTX_CKPT", _DEFAULT_LTX_CKPT)
         ltx_te = os.getenv("COMFY_LTX_TEXT_ENCODER", _DEFAULT_LTX_TEXT_ENCODER)
         it_unet = os.getenv("COMFY_INFINITETALK_UNET", _DEFAULT_INFINITETALK_UNET)
@@ -2902,6 +3205,15 @@ class ComfyUIClient:
             self._model_list_has(models, name)
             for name in (h3_unet, h3_clip, h3_vvae, h3_avae)
         ) or self._model_list_has(models, "minimax_h3_ref2va")
+        fasth3_ok = (
+            self._model_list_has(models, fasth3_unet, "fasth3", "fastvideo_fasth3")
+            and self._model_list_has(models, h3_clip)
+            and (
+                self._model_list_has(models, fasth3_vvae, h3_vvae)
+                or self._model_list_has(models, "minimax_h3_video_vae")
+            )
+            and self._model_list_has(models, h3_avae, "minimax_h3_audio_vae")
+        )
         ltx_ok = self._model_list_has(models, ltx_ckpt, "ltx-2.3", "ltx_2.3")
         it_ok = self._model_list_has(models, it_patch, "infinitetalk", "infiniteTalk")
         humo_ok = self._model_list_has(models, humo_unet, "humo")
@@ -2910,12 +3222,23 @@ class ComfyUIClient:
             "minimax-h3": {
                 "ready": h3_ok,
                 "requires": [h3_unet, h3_clip, h3_vvae, h3_avae],
-                "note": "ComfyUI ≥ 0.30; HF Comfy-Org/MiniMax-H3 (ref2va + VAEs + Qwen3VL)",
+                "note": "ComfyUI ≥ 0.30; Ref2VA lip sync. HF Comfy-Org/MiniMax-H3",
+            },
+            "fasth3": {
+                "ready": fasth3_ok,
+                "requires": [fasth3_unet, h3_clip, fasth3_vvae, h3_avae],
+                "note": (
+                    "ComfyUI ≥ 0.36; 8-step I2V/T2V only — no Ref2VA. "
+                    "Draft/iteration; keep base H3 for performer lip sync."
+                ),
             },
             "ltx23": {
                 "ready": ltx_ok,
                 "requires": [ltx_ckpt, ltx_te],
-                "note": "Official IA2V-style graph; distilled fp8 recommended for local",
+                "note": (
+                    "Official IA2V-style graph; audio-conditioned mouth motion "
+                    "(not phoneme Ref2VA). Distilled fp8 recommended for local/Arc."
+                ),
             },
             "infinitetalk": {
                 "ready": it_ok or self._model_list_has(models, it_unet),

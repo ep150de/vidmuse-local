@@ -94,6 +94,7 @@ class HermesDirector:
         self.pipeline_director: str = "cloud_llm"
         self.pipeline_stills: str = "comfy"
         self.pipeline_video: str = "comfy_cloud"
+        self.video_model: str = "minimax-h3"
 
         # Progress tracking
         self._progress_callback: Optional[ProgressCallback] = None
@@ -139,10 +140,14 @@ class HermesDirector:
         director: str = "cloud_llm",
         stills: str = "comfy",
         video: str = "comfy_cloud",
+        video_model: str = "minimax-h3",
     ) -> None:
         self.pipeline_director = director
         self.pipeline_stills = stills
         self.pipeline_video = video
+        from server.pipeline import normalize_video_model
+
+        self.video_model = normalize_video_model(video_model)
         self.use_home_agent_stills = stills == "home_agent" and bool(self.home_agent_url)
         self.use_home_agent_video = video == "home_agent" and bool(self.home_agent_url)
 
@@ -2186,6 +2191,16 @@ Respond with ONLY this JSON:
                         width=768,
                         height=448,
                     )
+                elif self.pipeline_stills == "fal":
+                    from server.fal_client import FalClient
+
+                    fal_dest = board_dir / "fal_raw" / f"still_{idx:02d}.png"
+                    img_path = await FalClient().generate_image(
+                        prompt,
+                        dest=fal_dest,
+                        width=768,
+                        height=448,
+                    )
                 else:
                     img_path = await self.comfyui.generate_image_turbo(
                         prompt=prompt,
@@ -2208,9 +2223,12 @@ Respond with ONLY this JSON:
                 scene["still_url"] = (
                     f"/api/session/{session_id}/asset/storyboard/{dest.name}"
                 )
-                scene["still_source"] = (
-                    "home_agent" if self.use_home_agent_stills else self.comfy_backend
-                )
+                if self.use_home_agent_stills:
+                    scene["still_source"] = "home_agent"
+                elif self.pipeline_stills == "fal":
+                    scene["still_source"] = "fal"
+                else:
+                    scene["still_source"] = self.comfy_backend
             plan_path = self.output_dir / "timeline_plan.json"
             plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
             self.timeline_plan = plan
@@ -2267,22 +2285,72 @@ Respond with ONLY this JSON:
         if not audio_src or not Path(audio_src).is_file():
             raise ValueError("No audio path on director")
 
+        from server.pipeline import engine_label, resolve_scene_engine
+
         session_dir = self.output_dir / "videos"
         session_dir.mkdir(parents=True, exist_ok=True)
         scene["status"] = "rendering"
+
+        still: Optional[str] = None
+        stype = str(scene.get("type") or "")
+        # Prefer per-scene storyboard still, then identity / refs
+        still_candidate = scene.get("still_path") or scene.get("still_local")
+        if still_candidate and Path(str(still_candidate)).is_file():
+            still = str(still_candidate)
+        elif stype != "INTRO_BROLL":
+            if self.identity_sheet_path and Path(self.identity_sheet_path).is_file():
+                still = self.identity_sheet_path
+            elif self.reference_images:
+                for ref in self.reference_images:
+                    if ref and Path(ref).is_file():
+                        still = ref
+                        break
+
+        engine = resolve_scene_engine(
+            self.video_model or self.video_backend or "minimax-h3",
+            stype,
+            has_image=bool(still),
+        )
         self._emit_progress(
             self.PHASE_VIDEO,
             int(10 + (scene_index / max(1, len(scenes))) * 80),
-            f"Rendering H3 scene {scene_index + 1}/{len(scenes)} ({scene.get('type')})",
+            f"Rendering {engine_label(engine)} scene "
+            f"{scene_index + 1}/{len(scenes)} ({scene.get('type')})",
         )
 
-        # Align frames first, then slice audio to the *same* duration so lips
-        # don't drift when H3 snaps length to 5+17k.
-        fps = float(os.getenv("COMFY_H3_FPS", "24"))
+        # Align frames to the selected engine, then slice audio to match.
         gen_secs = min(14.5, max(3.0, float(scene.get("duration") or 8.0)))
-        frames = _h3_align_frames(max(5, int(round(gen_secs * fps))))
-        frames = min(frames, int(os.getenv("COMFY_H3_MAX_FRAMES", "362")))
-        frames = _h3_align_frames(frames)
+        if engine == "ltx23":
+            from server.image_generator import _ltx_align_frames
+
+            fps = float(os.getenv("COMFY_LTX_FPS", "24"))
+            frames = _ltx_align_frames(max(9, int(round(gen_secs * fps))))
+            frames = min(frames, int(os.getenv("COMFY_LTX_MAX_FRAMES", "97")))
+            frames = _ltx_align_frames(frames)
+            width = int(os.getenv("COMFY_LTX_WIDTH", os.getenv("COMFY_H3_WIDTH", "768")))
+            height = int(
+                os.getenv("COMFY_LTX_HEIGHT", os.getenv("COMFY_H3_HEIGHT", "512"))
+            )
+        else:
+            fps = float(
+                os.getenv(
+                    "COMFY_FASTH3_FPS" if engine == "fasth3" else "COMFY_H3_FPS",
+                    "24",
+                )
+            )
+            frames = _h3_align_frames(max(5, int(round(gen_secs * fps))))
+            max_fr = int(
+                os.getenv(
+                    "COMFY_FASTH3_MAX_FRAMES"
+                    if engine == "fasth3"
+                    else "COMFY_H3_MAX_FRAMES",
+                    "362",
+                )
+            )
+            frames = min(frames, max_fr)
+            frames = _h3_align_frames(frames)
+            width = int(os.getenv("COMFY_H3_WIDTH", "768"))
+            height = int(os.getenv("COMFY_H3_HEIGHT", "448"))
         aligned_secs = frames / fps
 
         start_t = float(scene.get("start") or 0.0)
@@ -2297,17 +2365,6 @@ Respond with ONLY this JSON:
             normalize=False,
         )
 
-        still: Optional[str] = None
-        stype = str(scene.get("type") or "")
-        if stype != "INTRO_BROLL":
-            if self.identity_sheet_path and Path(self.identity_sheet_path).is_file():
-                still = self.identity_sheet_path
-            elif self.reference_images:
-                for ref in self.reference_images:
-                    if ref and Path(ref).is_file():
-                        still = ref
-                        break
-
         prompt = str(scene.get("prompt") or "").strip()
         character = plan.get("character_lock") or plan.get("character") or ""
         if character and character.lower() not in prompt.lower():
@@ -2315,20 +2372,38 @@ Respond with ONLY this JSON:
         if direction and direction.strip():
             if direction.strip().lower() not in prompt.lower():
                 prompt = f"{direction.strip()}. {prompt}"
-        if stype == "PERF":
+        if stype == "PERF" and engine == "minimax-h3":
             prompt = (
                 f"{prompt} Mouth clearly visible; lips precisely match <Audio 1> phonemes."
+            )
+        elif engine in ("ltx23", "fasth3"):
+            prompt = (
+                f"{prompt} Natural mouth motion matching the song energy; "
+                f"cinematic music video, consistent identity. "
+                f"NO text, NO captions, NO letters."
             )
 
         if self._video_seed_base is None:
             self._video_seed_base = int(time.time()) % (2**31)
-        # Tiny per-scene offset keeps motion variety without abandoning identity lock
         seed = self._video_seed_base + scene_index
 
-        width = int(os.getenv("COMFY_H3_WIDTH", "768"))
-        height = int(os.getenv("COMFY_H3_HEIGHT", "448"))
+        use_ha_h3 = (
+            engine == "minimax-h3"
+            and (self.use_home_agent_video or self.pipeline_video == "home_agent")
+        )
+        use_fal = self.pipeline_video == "fal"
 
-        if self.use_home_agent_video or self.pipeline_video == "home_agent":
+        if use_fal:
+            video_path = await self._render_via_fal(
+                prompt=prompt,
+                audio_path=str(audio_slice),
+                image_path=still,
+                num_frames=frames,
+                seed=seed,
+                duration=aligned_secs,
+                scene_index=scene_index,
+            )
+        elif use_ha_h3:
             video_path = await self._render_h3_via_home_agent(
                 prompt=prompt,
                 audio_path=str(audio_slice),
@@ -2339,6 +2414,34 @@ Respond with ONLY this JSON:
                 width=width,
                 height=height,
                 scene_index=scene_index,
+            )
+        elif engine == "ltx23":
+            if not still:
+                raise RuntimeError(
+                    f"LTX IA2V needs a still for scene {scene_index}; "
+                    "generate storyboard stills or upload a ref"
+                )
+            video_path = await self.comfyui.generate_video_i2v(
+                image_path=still,
+                prompt=prompt,
+                num_frames=frames,
+                seed=seed,
+                audio_path=str(audio_slice),
+                duration=aligned_secs,
+                width=width,
+                height=height,
+                backend="ltx23",
+            )
+        elif engine == "fasth3":
+            video_path = await self.comfyui.generate_video_fasth3(
+                prompt=prompt,
+                audio_path=str(audio_slice),
+                image_path=still,
+                num_frames=frames,
+                seed=seed,
+                duration=aligned_secs,
+                width=width,
+                height=height,
             )
         else:
             video_path = await self.comfyui.generate_video_h3(
@@ -2356,7 +2459,9 @@ Respond with ONLY this JSON:
             scene["status"] = "failed"
             plan_path = self.output_dir / "timeline_plan.json"
             plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
-            raise RuntimeError(f"H3 render failed for scene {scene_index}")
+            raise RuntimeError(
+                f"{engine_label(engine)} render failed for scene {scene_index}"
+            )
 
         dest = session_dir / f"studio_{scene_index:02d}.mp4"
         shutil.copy(video_path, dest)
@@ -2366,10 +2471,16 @@ Respond with ONLY this JSON:
         scene["video_url"] = f"/api/session/{session_id}/asset/video/{dest.name}"
         scene["audio_aligned_secs"] = round(aligned_secs, 3)
         scene["rendered_at"] = time.time()
+        scene["video_engine"] = engine
+        scene["video_model"] = self.video_model
         scene["video_source"] = (
-            "home_agent"
-            if (self.use_home_agent_video or self.pipeline_video == "home_agent")
-            else self.comfy_backend
+            "fal"
+            if use_fal
+            else (
+                "home_agent"
+                if use_ha_h3
+                else self.comfy_backend
+            )
         )
         plan_path = self.output_dir / "timeline_plan.json"
         plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
@@ -2453,6 +2564,76 @@ Respond with ONLY this JSON:
             (result.get("reply_text") or "")[:240],
         )
         return None
+
+    async def _render_via_fal(
+        self,
+        *,
+        prompt: str,
+        audio_path: str,
+        image_path: Optional[str],
+        num_frames: int,
+        seed: int,
+        duration: float,
+        scene_index: int,
+    ) -> Optional[str]:
+        """Draft clip via FAL free-tier cloud; remux SceneMux audio slice."""
+        from server.fal_client import FalClient, FalError
+
+        out_dir = self.output_dir / "videos" / "fal_raw"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dest = out_dir / f"fal_{scene_index:02d}.mp4"
+        try:
+            client = FalClient()
+            path = await client.generate_video(
+                prompt=prompt,
+                dest=dest,
+                image_path=image_path,
+                duration=min(6.0, float(duration)),
+                seed=seed,
+            )
+        except FalError as exc:
+            raise RuntimeError(str(exc)) from exc
+        if not path or not Path(path).is_file():
+            return None
+        # Replace FAL soundtrack with our aligned song slice
+        muxed = out_dir / f"fal_{scene_index:02d}_mux.mp4"
+        try:
+            self._mux_video_audio(path, audio_path, muxed)
+            return str(muxed)
+        except Exception as exc:
+            LOG.warning("FAL audio remux failed (%s); using FAL audio", exc)
+            return path
+
+    def _mux_video_audio(self, video_path: str, audio_path: str, dest: Path) -> None:
+        """Replace clip audio with a SceneMux-aligned slice (shortest)."""
+        import subprocess
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-i",
+            str(audio_path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-shortest",
+            str(dest),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0 or not dest.is_file():
+            raise RuntimeError(
+                (result.stderr or result.stdout or "ffmpeg mux failed")[:400]
+            )
 
     async def render_studio_all(
         self,

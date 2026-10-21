@@ -282,8 +282,47 @@ textarea:focus:not(:focus-visible) {
 
 @media (min-width: 720px) {
   .pipeline-lanes {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+@media (min-width: 960px) {
+  .pipeline-lanes {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.engine-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0.15rem;
+}
+
+.engine-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+
+.engine-chip.ok {
+  color: color-mix(in srgb, #2f9e6a 80%, var(--text));
+  border-color: color-mix(in srgb, #2f9e6a 45%, var(--border));
+}
+
+.engine-chip.bad {
+  color: color-mix(in srgb, #c44 75%, var(--text));
+  border-color: color-mix(in srgb, #c44 40%, var(--border));
+}
+
+.engine-chip.muted {
+  opacity: 0.85;
 }
 
 .pipeline-lane {
@@ -679,6 +718,27 @@ textarea:focus:not(:focus-visible) {
   border: 1px solid rgba(232, 165, 75, 0.3);
   background: rgba(232, 165, 75, 0.08);
   color: var(--text-secondary);
+}
+
+.credit-note.warn p {
+  margin: 0 0 0.45rem;
+}
+
+.credit-note.warn p:last-child {
+  margin-bottom: 0;
+}
+
+.fal-setup-steps {
+  margin: 0.35rem 0 0.5rem;
+  padding-left: 1.2rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.fal-setup-steps a {
+  color: var(--accent, #c4a574);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .progress-block {
