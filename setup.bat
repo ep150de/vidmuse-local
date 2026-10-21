@@ -1,5 +1,5 @@
 @echo off
-REM VidMuse first-run setup wizard (Windows)
+REM SceneMux first-run setup wizard (Windows)
 setlocal
 cd /d "%~dp0"
 

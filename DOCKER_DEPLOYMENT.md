@@ -1,4 +1,6 @@
-# Docker Deployment — VidMuse Local
+# Docker Deployment — SceneMux
+
+Formerly VidMuse Local. Prefer the root [README](README.md) for current studio / engine setup.
 
 ## Prerequisites
 

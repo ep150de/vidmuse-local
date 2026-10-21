@@ -2,7 +2,7 @@
 # Quick dependency installer for macOS (Homebrew)
 set -euo pipefail
 
-echo "==> VidMuse macOS dependency helper"
+echo "==> SceneMux macOS dependency helper"
 
 if ! command -v brew >/dev/null 2>&1; then
   echo "Homebrew not found."

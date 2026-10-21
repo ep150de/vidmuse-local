@@ -1,13 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
+# SceneMux API binary — run from server/:  pyinstaller scenemux-server.spec --clean
+# See packaging/server-binary.md
 
 a = Analysis(
-    ['../server/main.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
     datas=[
-        ('../server/requirements.txt', '.'),
+        ('requirements.txt', '.'),
+        ('comfyui_workflows', 'comfyui_workflows'),
         ('../README.md', '.'),
         ('../docker-compose.yml', '.'),
+        ('../docker-compose.cloud.yml', '.'),
+        ('../.env.example', '.'),
     ],
     hiddenimports=[
         'uvicorn',
@@ -27,6 +32,10 @@ a = Analysis(
         'librosa',
         'soundfile',
         'soundfile._soundfile',
+        'scipy',
+        'numpy',
+        'fastapi',
+        'pydantic',
     ],
     hookspath=[],
     hooksconfig={},
@@ -34,13 +43,7 @@ a = Analysis(
     excludes=[
         'matplotlib',
         'tkinter',
-        'test',
         'unittest',
-        'email',
-        'http',
-        'xml',
-        'logging',
-        'pydoc',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -56,7 +59,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='vidmuse-server',
+    name='scenemux-server',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -69,5 +72,4 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='../assets/icon.ico',
 )

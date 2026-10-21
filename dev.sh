@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start VidMuse API + Vite with the latest source (kills stale listeners first).
+# Start SceneMux API + Vite with the latest source (kills stale listeners first).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"

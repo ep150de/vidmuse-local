@@ -1,7 +1,7 @@
 # Quick dependency installer for Windows (winget)
 $ErrorActionPreference = "Continue"
 
-Write-Host "==> VidMuse Windows dependency helper"
+Write-Host "==> SceneMux Windows dependency helper"
 
 function Ensure-Winget {
   if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {

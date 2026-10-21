@@ -147,15 +147,20 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 **Cloud:** CPU FastAPI host + FFmpeg, Ollama Cloud key, Comfy Cloud Standard+, optional OpenCode Go key. Optional `FAL_KEY` for drafts only.
 
-## Windows packaged installer
+## Installers / packaging
 
-```cmd
-setup.bat                 # first-time config (keys / mode)
-build-windows.bat         # build vidmuse-local-setup.exe
-```
+**No official Windows or Linux installer binaries are published yet.** Use the
+setup wizards above and run from source until a tagged stable release.
 
-See [WINDOWS_BUILD.md](WINDOWS_BUILD.md).
+| | |
+|--|--|
+| Status & policy | [packaging/README.md](packaging/README.md) |
+| Windows NSIS (maintainer builds) | [WINDOWS_BUILD.md](WINDOWS_BUILD.md) · `build-windows.bat` → `scenemux-setup.exe` |
+| Linux package | Planned for stable — [packaging/linux/README.md](packaging/linux/README.md) |
+| Server-only PyInstaller | [packaging/server-binary.md](packaging/server-binary.md) |
+
+Legacy `vidmuse-local-setup.exe` / “VidMuse Local” installer names are retired.
 
 ## License
 
-MIT — Private repository, not for distribution without permission.
+MIT — see [LICENSE](LICENSE). Public repo: [github.com/ep150de/scenemux](https://github.com/ep150de/scenemux).

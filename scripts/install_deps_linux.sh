@@ -2,7 +2,7 @@
 # Quick dependency installer for Linux (apt / dnf / pacman)
 set -euo pipefail
 
-echo "==> VidMuse Linux dependency helper"
+echo "==> SceneMux Linux dependency helper"
 
 PKG=""
 if command -v apt-get >/dev/null 2>&1; then

@@ -1,123 +1,56 @@
-# Building Windows Installer for VidMuse Local
+# Windows packaging (SceneMux)
+
+> **Status:** packaging scripts are maintained for a future stable release.
+> There is **no official `scenemux-setup.exe` on GitHub Releases yet**.
+> For daily use, run from source: `setup.bat` → start API + client.
+>
+> Overview: [packaging/README.md](packaging/README.md)
 
 ## First-time config (any Windows PC)
-
-Use the quick setup wizard to choose **local vs cloud** and save API keys:
 
 ```cmd
 setup.bat
 ```
 
-Optional dependency helper (Python / Node / FFmpeg via winget):
+Optional deps (Python / Node / FFmpeg via winget):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install_deps_windows.ps1
 ```
 
-## Prerequisites
+## Maintainer: build the NSIS installer
+
+Prerequisites:
+
 - Python 3.11+
-- PyInstaller
-- NSIS (Nullsoft Scriptable Install System)
-- CMake and build tools (for llama.cpp)
-- Docker Desktop (optional)
+- Node.js LTS + npm
+- [PyInstaller](https://pyinstaller.org/) (`pip install pyinstaller`)
+- [NSIS](https://nsis.sourceforge.io/) (`makensis` on `PATH`)
 
-## GGUF Model Setup
-
-Download a GGUF model and place it in `server/models/`:
-```cmd
-mkdir server\models
-REM Download qwen2.5-32B Q4_K_M
-powershell -Command "Invoke-WebRequest -Uri 'https://huggingface.co/bartowski/qwen2.5-32B-Instruct-GGUF/resolve/main/qwen2.5-32b-instruct-Q4_K_M.gguf' -OutFile 'server\models\qwen2.5-32b-instruct-Q4_K_M.gguf'"
-```
-
-## Quick Build
 ```cmd
 build-windows.bat
 ```
-Output: `vidmuse-local-setup.exe`
 
-## What Gets Installed
-- Server EXE: `C:\Program Files\VidMuse Local\server\`
-- ComfyUI integration
-- GGUF model directory: `C:\Program Files\VidMuse Local\models\`
-- Desktop shortcuts
+Produces `scenemux-setup.exe` in the repo root (version `0.1.0-dev` until bumped
+in `packaging/windows/scenemux-installer.nsi`).
 
-Cloud mode (no local GPU) uses `docker-compose.cloud.yml` + `.env` from `setup.bat`.
+What it packages:
 
-## Distribution
-Upload `.exe` to GitHub Releases.
+- `server/dist/scenemux-server.exe` (API only)
+- Built studio UI from `client/dist`
+- `docker-compose.yml` / `docker-compose.cloud.yml` / `.env.example`
+- Short model pointer file (H3 / FastH3 / LTX — full detail in `docs/ENGINES.md`)
 
-## Notes for llama.cpp on Windows
+Still required on the machine after install: FFmpeg, ComfyUI or Comfy Cloud /
+Playground (and models or cloud keys). Optional `FAL_KEY` for drafts.
 
-The llama.cpp build on Windows requires:
-1. Visual Studio Build Tools (CMake, MSVC)
-2. CUDA toolkit (for GPU acceleration)
-3. `llama-cpp-python` with CUDA backend
+## Intel Arc / AI Playground
 
-For GPU support on Windows:
-```cmd
-pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
-```
-(Adjust CUDA version as needed: cu124 for CUDA 12.4, cu123 for 12.3, etc.)
+SceneMux can target Playground Comfy (`COMFYUI_URL`) and Home Agent. Detection
+and XPU notes live in `server/hardware_detect/` and [docs/HOME_AGENT.md](docs/HOME_AGENT.md).
 
-## Intel XPU Support on Windows
+## Distribution policy
 
-VidMuse Local supports Intel Arc GPUs with automatic AI-Playground detection.
-
-### Detection Process
-
-The server scans for Intel AI-Playground on all drives in this order:
-1. Default paths: `C:/Program Files/AI Playground`, `D:/AI Playground`
-2. Full drive scan for folders named "AI Playground"
-3. Checks for `device-service/xpu-smi.exe` to confirm XPU support
-4. Looks for bundled ComfyUI in AI-Playground installation
-5. Checks for Intel Vulkan driver as fallback XPU indicator
-
-### XPU ComfyUI Installation (Fallback)
-
-When AI-Playground is NOT detected but Intel XPU hardware IS found:
-```cmd
-# The server will auto-install XPU ComfyUI
-# This clones Intel's comfyui-deps and installs torch-xpu
-# Requires git and python in PATH
-XPU_AVAILABLE=1 server\server.exe
-```
-
-Installation sources (in priority order):
-1. Intel AI-Playground repo's `comfyui-deps`
-2. Standalone ComfyUI + `torch-xpu`
-3. Intel's ComfyUI fork (if available)
-
-### Manual XPU Setup
-
-If auto-detection fails, set explicitly:
-```cmd
-set COMFYUI_URL=http://localhost:8188
-set XPU_AVAILABLE=1
-server\server.exe
-```
-
-### Intel Arc GPU Drivers
-
-1. Download from Intel Driver & Support Assistant
-2. Verify with: `xpu-smi top` (should show GPU info)
-3. Install Intel oneAPI toolkit for full XPU support
-4. Verify Vulkan driver: check for `igvk64.dll` in `C:\Windows\System32\`
-
-### HuMo Lip-Sync Setup
-
-For enhanced lip-sync quality:
-```cmd
-# Download HuMo model to ComfyUI models directory
-mkdir server\comfyui_workflows\models
-REM Download humod.safetensors from model hub
-```
-
-### LTX-2.3 I2V Setup
-
-For enhanced video generation:
-```cmd
-# Download LTX-2.3 model to ComfyUI models directory
-mkdir server\comfyui_workflows\models
-REM Download ltx23_i2v.safetensors from model hub
-```
+Upload installers only as **tagged stable** GitHub Release assets, with matching
+docs. Do not treat local `scenemux-setup.exe` or legacy `vidmuse-local-setup.exe`
+builds as official downloads.

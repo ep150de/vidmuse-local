@@ -37,6 +37,15 @@ outputs/
 temp/
 *.log
 
+# Packaging / PyInstaller artifacts (build locally; publish only via Releases)
+scenemux-setup.exe
+vidmuse-local-setup.exe
+server/dist/
+server/build/
+server/build-venv/
+*.spec.bak
+client/dist/
+
 # Local scratch / probe scripts (never commit)
 .scratch_*.py
 .cron_*.py
