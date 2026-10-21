@@ -34,7 +34,7 @@ Playground weights: set **Video host** to Playground/LAN Comfy and `comfy_url` t
 
 ## FAL drafts
 
-Optional free-tier cloud for draft stills/clips — **not** required for Cloud / Playground.
+Optional draft cloud (prepaid / trial credits) — **not** required for Cloud / Playground. FAL video host cannot run Hybrid Fast H3 Ref2VA.
 
 1. Get a key: [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys)
 2. Set `FAL_KEY=…` in `.env`, restart the API

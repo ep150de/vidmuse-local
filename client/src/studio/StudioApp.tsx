@@ -53,12 +53,20 @@ function formatTc(sec: number): string {
 
 function sceneBadge(scene: StudioScene): { label: string; kind: string } {
   if (scene.status === "failed") return { label: "failed", kind: "failed" };
+  if (scene.status === "still_failed")
+    return { label: "still failed", kind: "failed" };
   if (scene.status === "ready" || scene.video_url)
     return { label: "ready", kind: "ready" };
   if (scene.status === "rendering") return { label: "rendering", kind: "busy" };
   if (scene.still_url) return { label: "still", kind: "still" };
   return { label: "queued", kind: "queued" };
 }
+
+const FAL_DRAFT_ONLY_MODELS: VideoModel[] = [
+  "minimax-h3",
+  "hybrid_fast",
+  "hybrid_ltx",
+];
 
 function RecentProjects() {
   const [projects, setProjects] = useState<
@@ -131,6 +139,7 @@ export function StudioApp({ serverHealth }: Props) {
   const [hermesToken, setHermesToken] = useState("");
   const [haTesting, setHaTesting] = useState(false);
   const [haStatus, setHaStatus] = useState<string | null>(null);
+  const [falDraftNote, setFalDraftNote] = useState<string | null>(null);
   const [plan, setPlan] = useState<TimelinePlan | null>(null);
   const [planStale, setPlanStale] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -160,9 +169,14 @@ export function StudioApp({ serverHealth }: Props) {
     (s) => s.status !== "ready" || !s.video_url
   ).length;
   const stillCount = scenes.filter((s) => s.still_url).length;
+  const stillFailedCount = scenes.filter(
+    (s) => s.status === "still_failed"
+  ).length;
   const identityUrl = plan?.identity_sheet_url
     ? mediaUrl(plan.identity_sheet_url)
     : null;
+  const clipLabel =
+    pipelineVideo === "fal" ? "FAL draft clip" : "video clip";
   const locked = busy || previewing || updatingStill;
 
   const lanes: PipelineLanes = useMemo(
@@ -205,6 +219,18 @@ export function StudioApp({ serverHealth }: Props) {
     return Boolean(serverHealth?.services?.fal?.ready);
   }, [serverHealth, pipelineVideo, pipelineStills]);
 
+  const coerceFalDraftEngine = useCallback((host: PipelineVideo, model: VideoModel) => {
+    if (host === "fal" && FAL_DRAFT_ONLY_MODELS.includes(model)) {
+      setVideoModel("fasth3");
+      setFalDraftNote(
+        "FAL is draft-only. Hybrid Fast / H3 Ref2VA need Comfy Cloud, Playground Comfy, or Home Agent — engine set to Fast Draft."
+      );
+      return "fasth3" as VideoModel;
+    }
+    if (host !== "fal") setFalDraftNote(null);
+    return model;
+  }, []);
+
   const applyPreset = useCallback((id: PipelinePresetId) => {
     setPipelinePreset(id);
     const preset = PIPELINE_PRESETS.find((p) => p.id === id);
@@ -212,8 +238,11 @@ export function StudioApp({ serverHealth }: Props) {
     setPipelineDirector(preset.lanes.pipeline_director);
     setPipelineStills(preset.lanes.pipeline_stills);
     setPipelineVideo(preset.lanes.pipeline_video);
-    setVideoModel(preset.lanes.video_model);
-  }, []);
+    coerceFalDraftEngine(
+      preset.lanes.pipeline_video,
+      preset.lanes.video_model
+    );
+  }, [coerceFalDraftEngine]);
 
   const sessionConfig = useCallback(
     () => ({
@@ -826,7 +855,9 @@ export function StudioApp({ serverHealth }: Props) {
     if (!guardEngine()) return;
     setError(null);
     setPreviewing(true);
-    setProgressLabel(`Previewing scene ${selectedIndex + 1} (1 H3 clip)…`);
+    setProgressLabel(
+      `Previewing scene ${selectedIndex + 1} (1 ${clipLabel})…`
+    );
     setProgressPct(15);
     try {
       await api.configureSession(sessionConfig());
@@ -846,6 +877,7 @@ export function StudioApp({ serverHealth }: Props) {
       setPreviewing(false);
     }
   }, [
+    clipLabel,
     direction,
     guardEngine,
     selectedIndex,
@@ -859,7 +891,9 @@ export function StudioApp({ serverHealth }: Props) {
     if (!guardEngine()) return;
     setPreviewing(true);
     setError(null);
-    setProgressLabel(`Re-rendering scene ${selectedIndex + 1} (1 H3 clip)…`);
+    setProgressLabel(
+      `Re-rendering scene ${selectedIndex + 1} (1 ${clipLabel})…`
+    );
     setProgressPct(20);
     try {
       await api.configureSession(sessionConfig());
@@ -888,6 +922,7 @@ export function StudioApp({ serverHealth }: Props) {
       setPreviewing(false);
     }
   }, [
+    clipLabel,
     direction,
     downloadUrl,
     guardEngine,
@@ -913,7 +948,11 @@ export function StudioApp({ serverHealth }: Props) {
       });
       if (stills.timeline_plan) setPlan(stills.timeline_plan);
       setShowFinal(false);
-      setProgressLabel("Still updated (image credits)");
+      setProgressLabel(
+        pipelineStills === "fal"
+          ? "Still updated (FAL draft credits)"
+          : "Still updated (image credits)"
+      );
       setProgressPct(100);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -922,6 +961,7 @@ export function StudioApp({ serverHealth }: Props) {
     }
   }, [
     guardEngine,
+    pipelineStills,
     selectedIndex,
     selectedScene,
     sessionConfig,
@@ -1322,6 +1362,7 @@ export function StudioApp({ serverHealth }: Props) {
                           const next = e.target.value as PipelineVideo;
                           setPipelinePreset("custom");
                           setPipelineVideo(next);
+                          coerceFalDraftEngine(next, videoModel);
                         }}
                       >
                         <option value="comfy_cloud">Comfy Cloud</option>
@@ -1336,8 +1377,14 @@ export function StudioApp({ serverHealth }: Props) {
                         className="studio-field"
                         value={videoModel}
                         onChange={(e) => {
+                          const next = e.target.value as VideoModel;
                           setPipelinePreset("custom");
-                          setVideoModel(e.target.value as VideoModel);
+                          if (pipelineVideo === "fal" && FAL_DRAFT_ONLY_MODELS.includes(next)) {
+                            coerceFalDraftEngine("fal", next);
+                          } else {
+                            setFalDraftNote(null);
+                            setVideoModel(next);
+                          }
                         }}
                       >
                         {VIDEO_MODEL_OPTIONS.map((o) => (
@@ -1497,12 +1544,18 @@ export function StudioApp({ serverHealth }: Props) {
                     </div>
                   )}
 
+                  {falDraftNote && (
+                    <p className="credit-note warn" role="status">
+                      {falDraftNote}
+                    </p>
+                  )}
+
                   {needsFalKey(lanes) && !falOk && (
                     <div className="credit-note warn" role="status">
                       <p>
-                        <strong>FAL</strong> is an optional free-tier cloud for
-                        draft stills/clips. SceneMux still slices your song and
-                        muxes the final cut. It is{" "}
+                        <strong>FAL</strong> is an optional draft cloud for
+                        stills/clips (prepaid / trial credits). SceneMux still
+                        slices your song and muxes the final cut. It is{" "}
                         <strong>not required</strong> for Cloud or Playground
                         presets.
                       </p>
@@ -1524,8 +1577,8 @@ export function StudioApp({ serverHealth }: Props) {
                         <li>Restart the API, then re-select FAL here</li>
                       </ol>
                       <p className="drop-hint">
-                        Free quota only — keep Comfy Cloud / Playground for
-                        production lip sync.
+                        Credits are prepaid — FAL cannot run Hybrid Fast H3
+                        Ref2VA. Keep Comfy Cloud / Playground for lip sync.
                       </p>
                     </div>
                   )}
@@ -1631,6 +1684,21 @@ export function StudioApp({ serverHealth }: Props) {
                 + stills (image credits). Existing H3 clips will be cleared.
               </p>
             )}
+
+            {stillFailedCount > 0 &&
+              (phase === "review" || phase === "brief") && (
+                <div className="resume-banner" role="status">
+                  <div>
+                    <p className="resume-title">Storyboard stills failed</p>
+                    <p className="resume-copy">
+                      {stillFailedCount} scene(s) have no still
+                      {pipelineStills === "fal"
+                        ? " — check FAL credits at fal.ai/dashboard, then Update still or replan."
+                        : " — retry Update still or replan storyboard."}
+                    </p>
+                  </div>
+                </div>
+              )}
 
             {renderFailed && phase === "review" && remainingCount > 0 && (
               <div className="resume-banner" role="status">

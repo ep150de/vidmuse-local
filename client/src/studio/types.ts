@@ -1,6 +1,11 @@
 export type ComfyBackend = "cloud" | "local" | "ai-playground";
 
-export type SceneStatus = "queued" | "rendering" | "ready" | "failed";
+export type SceneStatus =
+  | "queued"
+  | "rendering"
+  | "ready"
+  | "failed"
+  | "still_failed";
 
 export interface StudioScene {
   index: number;

@@ -54,9 +54,13 @@ Recommended test matrix:
 
 Prefer fp8 / FastH3 int8 / distilled LTX weights on Arc. Documented in health `video_models` probes.
 
-## FAL free-tier (optional)
+## FAL drafts (optional)
 
 [FAL](https://fal.ai) is a third-party cloud that runs image/video models over an API. SceneMux can use it for **short draft stills or clips** so you can try ideas without local GPU weight installs. It is **not** required for normal Cloud or Playground presets, and it does **not** replace Comfy Cloud / Playground as the production path. SceneMux still slices your song and muxes the final MP4.
+
+**Credits:** FAL uses prepaid / trial account balance — not a reliable “N free gens per day” entitlement. When credits run out, requests fail (often as 403/402). Check [fal.ai/dashboard](https://fal.ai/dashboard).
+
+**Host vs engine:** Video host = FAL is **draft-only for every scene**. Hybrid Fast / H3 Ref2VA need Comfy Cloud, Playground Comfy, or Home Agent. The studio coerces Hybrid/H3 → Fast Draft labeling when FAL is selected so Preview does not pretend to run Ref2VA.
 
 ### Get a key (first time)
 
@@ -75,7 +79,7 @@ FAL_KEY=your_key_here
 4. Restart the SceneMux API so `/api/health` → `services.fal.ready` is true
 5. In studio **Advanced**, set Video host and/or Stills to **FAL (draft)**
 
-Free daily quotas apply; the UI warns when the key is missing or quota is exhausted. Concurrent jobs are capped (`FAL_MAX_CONCURRENT`, default 1).
+The UI warns when the key is missing or credits are exhausted. Concurrent jobs are capped (`FAL_MAX_CONCURRENT`, default 1).
 
 ## WanGP
 

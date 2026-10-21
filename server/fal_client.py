@@ -1,6 +1,8 @@
 """Optional FAL cloud host for draft stills / short clips (FAL_KEY required).
 
+Uses prepaid / trial FAL credits — not a daily free-gen entitlement.
 Does not replace Comfy Cloud or Playground as primary production paths.
+FAL video host is draft-only (cannot run Hybrid Fast H3 Ref2VA).
 SceneMux still owns audio slicing and final mux.
 """
 
@@ -18,7 +20,7 @@ import aiohttp
 
 LOG = logging.getLogger("scenemux.fal")
 
-# Free-tier friendly defaults — short drafts only
+# Draft defaults — short clips only (prepaid credits)
 _DEFAULT_VIDEO_MODEL = "fal-ai/minimax/video-01-live"
 _DEFAULT_IMAGE_MODEL = "fal-ai/flux/schnell"
 _MAX_CONCURRENT = int(os.getenv("FAL_MAX_CONCURRENT", "1"))
@@ -75,7 +77,7 @@ class FalClient:
             return {
                 "status": "unconfigured",
                 "ready": False,
-                "note": "Set FAL_KEY for optional draft cloud generations",
+                "note": "Set FAL_KEY for optional draft stills/clips (prepaid credits)",
             }
         # Lightweight auth probe — list models is not always public; try a HEAD-ish GET
         try:
@@ -90,7 +92,7 @@ class FalClient:
                             "video_model": self.video_model,
                             "image_model": self.image_model,
                             "max_concurrent": _MAX_CONCURRENT,
-                            "note": "Free-tier draft host; do not use as primary production path",
+                            "note": "Draft host (prepaid credits); not Hybrid Fast H3 / production",
                         }
                     if resp.status in (401, 403):
                         return {
@@ -126,10 +128,37 @@ class FalClient:
                     text = await resp.text()
                     if resp.status >= 400:
                         low = text.lower()
-                        if resp.status == 403 or "quota" in low or "limit" in low:
+                        credit_hit = any(
+                            token in low
+                            for token in (
+                                "quota",
+                                "insufficient credit",
+                                "insufficient_credit",
+                                "out of credit",
+                                "no credits",
+                                "balance",
+                                "billing",
+                                "exhausted",
+                                "payment required",
+                                "upgrade your",
+                            )
+                        )
+                        rate_hit = "rate limit" in low or "too many requests" in low
+                        if credit_hit or resp.status == 402:
                             raise FalError(
-                                "FAL free quota exhausted or blocked — wait or upgrade",
+                                "FAL credits exhausted or request blocked — "
+                                "check https://fal.ai/dashboard",
                                 code="quota",
+                            )
+                        if resp.status in (401, 403) and not credit_hit:
+                            raise FalError(
+                                f"FAL auth/forbidden ({resp.status}): {text[:240]}",
+                                code="auth",
+                            )
+                        if rate_hit or resp.status == 429:
+                            raise FalError(
+                                "FAL rate limited — wait and retry",
+                                code="rate",
                             )
                         raise FalError(
                             f"FAL submit failed ({resp.status}): {text[:300]}",
@@ -224,7 +253,7 @@ class FalClient:
         seed: Optional[int] = None,
     ) -> Optional[str]:
         """Short draft clip. Prefer image_url when a still exists."""
-        # Cap free-tier drafts
+        # Cap short drafts to limit spend
         dur = max(2, min(6, int(round(float(duration)))))
         payload: Dict[str, Any] = {
             "prompt": prompt,

@@ -340,7 +340,7 @@ async def health():
             services["fal"] = {
                 "status": "unconfigured",
                 "ready": False,
-                "note": "Set FAL_KEY for optional free-tier draft stills/clips",
+                "note": "Set FAL_KEY for optional draft stills/clips (prepaid credits)",
             }
     except Exception as exc:
         services["fal"] = {"status": "down", "ready": False, "error": str(exc)}
@@ -1239,12 +1239,22 @@ def _storyboard_concept(session: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _identity_sheet_url(session_id: str, director: HermesDirector) -> Optional[str]:
+    """Prefer director helper so identity/ vs references/ URLs stay correct."""
+    url = director._studio_identity_url()
+    if url:
+        return url
     if not director.identity_sheet_path:
         return None
-    return (
-        f"/api/session/{session_id}/asset/identity/"
-        f"{Path(director.identity_sheet_path).name}"
-    )
+    path = Path(director.identity_sheet_path)
+    if not path.is_file():
+        return None
+    # Last resort only when file already lives under session identity/
+    identity_dir = (OUTPUT_DIR / session_id / "identity").resolve()
+    try:
+        path.resolve().relative_to(identity_dir)
+        return f"/api/session/{session_id}/asset/identity/{path.name}"
+    except ValueError:
+        return None
 
 
 def _safe_session_asset(session_id: str, subdir: str, filename: str) -> Path:
@@ -1620,7 +1630,21 @@ async def studio_storyboard_stills(request: dict):
         )
     except Exception as exc:
         LOG.exception("Studio storyboard stills failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        # Persist partial plan so UI can show still_failed badges
+        if director.timeline_plan:
+            session["timeline_plan"] = director.timeline_plan
+            if director.identity_sheet_path:
+                session["identity_sheet_path"] = director.identity_sheet_path
+            _write_project_manifest(session_id, session)
+        detail = str(exc).strip() or "Storyboard stills failed"
+        low = detail.lower()
+        status = 503 if (
+            "credit" in low
+            or "quota" in low
+            or "blocked" in low
+            or "fal" in low
+        ) else 502
+        raise HTTPException(status_code=status, detail=detail) from exc
 
     if director.identity_sheet_path:
         session["identity_sheet_path"] = director.identity_sheet_path

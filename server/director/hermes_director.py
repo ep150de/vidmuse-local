@@ -946,6 +946,21 @@ Respond with ONLY this JSON:
                     width=768,
                     height=1024,
                 )
+            elif self.pipeline_stills == "fal":
+                from server.fal_client import FalClient
+
+                self._emit_progress(
+                    self.PHASE_REFERENCES,
+                    40,
+                    "Identity sheet via FAL draft…",
+                )
+                fal_dest = sheet_dir / "fal_identity.png"
+                img_path = await FalClient().generate_image(
+                    prompt,
+                    dest=fal_dest,
+                    width=768,
+                    height=1024,
+                )
             else:
                 img_path = await self.comfyui.generate_image_turbo(
                     prompt=prompt,
@@ -977,10 +992,19 @@ Respond with ONLY this JSON:
             self._emit_progress(self.PHASE_REFERENCES, 100, "Performer identity locked")
             return self.identity_sheet_path
 
-        # Fallback: use the first user ref as the sheet
+        # Fallback: copy first user ref into identity/ so /asset/identity/ URLs work
         if refs:
-            self.identity_sheet_path = refs[0]
-            LOG.info("Using raw reference as identity sheet: %s", refs[0])
+            suffix = Path(refs[0]).suffix.lower() or ".png"
+            if suffix not in (".png", ".jpg", ".jpeg", ".webp"):
+                suffix = ".png"
+            fallback_dest = sheet_dir / f"performer_sheet{suffix}"
+            shutil.copy(refs[0], fallback_dest)
+            self.identity_sheet_path = str(fallback_dest)
+            LOG.info(
+                "Using copied reference as identity sheet: %s → %s",
+                refs[0],
+                fallback_dest,
+            )
             return self.identity_sheet_path
         return None
 
@@ -1864,11 +1888,23 @@ Respond with ONLY this JSON:
     def _studio_identity_url(self) -> Optional[str]:
         if not self.identity_sheet_path or not Path(self.identity_sheet_path).is_file():
             return None
+        path = Path(self.identity_sheet_path).resolve()
+        identity_dir = (self.output_dir / "identity").resolve()
+        refs_dir = (self.output_dir / "references").resolve()
         session_id = self.output_dir.name
-        return (
-            f"/api/session/{session_id}/asset/identity/"
-            f"{Path(self.identity_sheet_path).name}"
-        )
+        try:
+            path.relative_to(identity_dir)
+            return f"/api/session/{session_id}/asset/identity/{path.name}"
+        except ValueError:
+            pass
+        try:
+            path.relative_to(refs_dir)
+            return f"/api/session/{session_id}/asset/references/{path.name}"
+        except ValueError:
+            pass
+        # Path outside session folders — do not emit a broken identity URL
+        LOG.warning("Identity path not under identity/ or references/: %s", path)
+        return None
 
     def _studio_lyric_windows(
         self, duration: float, target_secs: float
@@ -2176,6 +2212,7 @@ Respond with ONLY this JSON:
             )
             # INTRO_BROLL: avoid forcing face identity
             use_refs = None if scene.get("type") == "INTRO_BROLL" else (refs[:2] or None)
+            still_error: Optional[str] = None
             try:
                 if self.use_home_agent_stills:
                     img_path = await self._generate_image_via_home_agent(
@@ -2212,6 +2249,7 @@ Respond with ONLY this JSON:
             except Exception as exc:
                 LOG.warning("Storyboard still %d failed: %s", idx, exc)
                 img_path = None
+                still_error = str(exc)
 
             if img_path and Path(img_path).is_file():
                 dest = board_dir / f"studio_still_{idx:02d}.png"
@@ -2223,18 +2261,46 @@ Respond with ONLY this JSON:
                 scene["still_url"] = (
                     f"/api/session/{session_id}/asset/storyboard/{dest.name}"
                 )
+                scene.pop("error", None)
+                if scene.get("status") in (None, "queued", "still_failed"):
+                    scene["status"] = "queued"
                 if self.use_home_agent_stills:
                     scene["still_source"] = "home_agent"
                 elif self.pipeline_stills == "fal":
                     scene["still_source"] = "fal"
                 else:
                     scene["still_source"] = self.comfy_backend
+            else:
+                scene["status"] = "still_failed"
+                scene["error"] = still_error or "Still generation returned no image"
+                scene.pop("still_url", None)
             plan_path = self.output_dir / "timeline_plan.json"
             plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
             self.timeline_plan = plan
 
-        plan["review_status"] = "stills_ready"
+        succeeded = sum(
+            1
+            for i in indices
+            if scenes[i].get("still_url") and scenes[i].get("still_path")
+        )
         plan["identity_sheet_url"] = self._studio_identity_url()
+        if succeeded == 0 and indices:
+            plan["review_status"] = "stills_failed"
+            plan_path = self.output_dir / "timeline_plan.json"
+            plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+            self.timeline_plan = plan
+            # Prefer first scene error (often quota) for the API message
+            first_err = next(
+                (
+                    str(scenes[i].get("error") or "")
+                    for i in indices
+                    if scenes[i].get("error")
+                ),
+                "All storyboard stills failed",
+            )
+            raise RuntimeError(first_err or "All storyboard stills failed")
+
+        plan["review_status"] = "stills_ready"
         plan_path = self.output_dir / "timeline_plan.json"
         plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
         self.timeline_plan = plan
@@ -2311,10 +2377,12 @@ Respond with ONLY this JSON:
             stype,
             has_image=bool(still),
         )
+        use_fal_host = self.pipeline_video == "fal"
+        progress_engine = "FAL draft" if use_fal_host else engine_label(engine)
         self._emit_progress(
             self.PHASE_VIDEO,
             int(10 + (scene_index / max(1, len(scenes))) * 80),
-            f"Rendering {engine_label(engine)} scene "
+            f"Rendering {progress_engine} scene "
             f"{scene_index + 1}/{len(scenes)} ({scene.get('type')})",
         )
 
@@ -2391,7 +2459,7 @@ Respond with ONLY this JSON:
             engine == "minimax-h3"
             and (self.use_home_agent_video or self.pipeline_video == "home_agent")
         )
-        use_fal = self.pipeline_video == "fal"
+        use_fal = use_fal_host
 
         if use_fal:
             video_path = await self._render_via_fal(
@@ -2460,7 +2528,8 @@ Respond with ONLY this JSON:
             plan_path = self.output_dir / "timeline_plan.json"
             plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
             raise RuntimeError(
-                f"{engine_label(engine)} render failed for scene {scene_index}"
+                f"{'FAL draft' if use_fal else engine_label(engine)} "
+                f"render failed for scene {scene_index}"
             )
 
         dest = session_dir / f"studio_{scene_index:02d}.mp4"
@@ -2471,7 +2540,7 @@ Respond with ONLY this JSON:
         scene["video_url"] = f"/api/session/{session_id}/asset/video/{dest.name}"
         scene["audio_aligned_secs"] = round(aligned_secs, 3)
         scene["rendered_at"] = time.time()
-        scene["video_engine"] = engine
+        scene["video_engine"] = "fal" if use_fal else engine
         scene["video_model"] = self.video_model
         scene["video_source"] = (
             "fal"

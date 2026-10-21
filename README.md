@@ -39,13 +39,13 @@ Home Agent LAN: [docs/HOME_AGENT.md](docs/HOME_AGENT.md).
 
 ## Optional FAL (drafts only)
 
-[FAL](https://fal.ai) is a third-party free-tier cloud for short draft stills/clips. **Not required** for Cloud or Playground.
+[FAL](https://fal.ai) is a third-party cloud for short draft stills/clips (prepaid / trial credits — not a daily free-gen entitlement). **Not required** for Cloud or Playground. FAL video host is draft-only; Hybrid Fast / H3 Ref2VA need Comfy or Home Agent.
 
 1. Create a key at [fal.ai/dashboard/keys](https://fal.ai/dashboard/keys)  
 2. Add `FAL_KEY=…` to `.env` (never commit it) and restart the API  
 3. Studio **Advanced** → Video host / Stills = **FAL (draft)**
 
-Details: [docs/ENGINES.md](docs/ENGINES.md#fal-free-tier-optional).
+Details: [docs/ENGINES.md](docs/ENGINES.md#fal-drafts-optional).
 
 ## First-time setup wizards (recommended)
 
@@ -82,7 +82,7 @@ The TUI wizard picks local vs cloud, collects API keys, checks dependencies, and
 - **ComfyUI / Comfy Cloud** — Storyboard stills + H3 / FastH3 / LTX video  
 - **Hermes Director** — Plan → stills → per-scene render → assemble  
 - **FFmpeg** — Scene concat + master MP3 mux  
-- **Optional FAL** — Free-tier draft stills/clips only  
+- **Optional FAL** — Prepaid/trial draft stills/clips only (not Hybrid Fast H3)  
 
 ## Cloud quick start
 
