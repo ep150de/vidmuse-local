@@ -100,6 +100,7 @@ class HermesDirector:
         self._progress_callback: Optional[ProgressCallback] = None
         self._frame_ready_callback: Optional[FrameReadyCallback] = None
         self._storyboard_cancel = False
+        self._studio_cancel = False
         self._current_phase = "idle"
         self._current_progress = 0
         self._status = "idle"
@@ -214,6 +215,13 @@ class HermesDirector:
     def request_storyboard_cancel(self) -> None:
         self._storyboard_cancel = True
         LOG.info("Storyboard render cancel requested")
+
+    def clear_studio_cancel(self) -> None:
+        self._studio_cancel = False
+
+    def request_studio_cancel(self) -> None:
+        self._studio_cancel = True
+        LOG.info("Studio render cancel requested")
 
     def _emit_frame_ready(self, index: int, frame: Dict[str, Any], total: int) -> None:
         if self._frame_ready_callback:
@@ -2376,6 +2384,7 @@ Respond with ONLY this JSON:
             self.video_model or self.video_backend or "minimax-h3",
             stype,
             has_image=bool(still),
+            override=scene.get("video_engine") or scene.get("engine_override"),
         )
         use_fal_host = self.pipeline_video == "fal"
         progress_engine = "FAL draft" if use_fal_host else engine_label(engine)
@@ -2710,7 +2719,8 @@ Respond with ONLY this JSON:
         *,
         rebuild_plan: bool = True,
     ) -> Dict[str, Any]:
-        """Plan (optional) + render every H3 scene, then assemble final MP4."""
+        """Plan (optional) + render every scene, then assemble final MP4."""
+        self.clear_studio_cancel()
         if rebuild_plan or not getattr(self, "timeline_plan", None):
             await self.build_studio_timeline_plan(direction, lock_identity=True)
         else:
@@ -2729,6 +2739,11 @@ Respond with ONLY this JSON:
             plan["review_status"] = "rendering"
         scenes = plan.get("scenes") or []
         for i in range(len(scenes)):
+            if self._studio_cancel:
+                LOG.info("Studio render cancelled before scene %d", i)
+                if plan is not None:
+                    plan["review_status"] = "cancelled"
+                break
             if scenes[i].get("status") == "ready" and scenes[i].get("video_path"):
                 continue
             try:
@@ -2737,19 +2752,35 @@ Respond with ONLY this JSON:
                 LOG.warning("Studio scene %d failed: %s", i, exc)
                 scenes[i]["status"] = "failed"
                 scenes[i]["error"] = str(exc)
+            if self._studio_cancel:
+                if plan is not None:
+                    plan["review_status"] = "cancelled"
+                break
 
         ready = [s for s in scenes if s.get("status") == "ready" and s.get("video_path")]
+        cancelled = bool(self._studio_cancel) or (
+            plan is not None and plan.get("review_status") == "cancelled"
+        )
         if not ready:
-            raise RuntimeError("No H3 scenes rendered successfully")
+            if cancelled:
+                return {
+                    "timeline_plan": plan,
+                    "final_video_path": None,
+                    "ready_count": 0,
+                    "scene_count": len(scenes),
+                    "cancelled": True,
+                }
+            raise RuntimeError("No scenes rendered successfully")
 
         final_path = await self.assemble_studio_final()
-        if plan is not None:
+        if plan is not None and not cancelled:
             plan["review_status"] = "complete"
         return {
             "timeline_plan": plan,
             "final_video_path": final_path,
             "ready_count": len(ready),
             "scene_count": len(scenes),
+            "cancelled": cancelled,
         }
 
     async def assemble_studio_final(self) -> str:

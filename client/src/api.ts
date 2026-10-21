@@ -70,6 +70,7 @@ class VidMuseAPI {
       }
       if (
         data.type === "studio_complete" ||
+        data.type === "studio_cancelled" ||
         data.type === "studio_error" ||
         data.type === "studio_scene"
       ) {
@@ -299,7 +300,12 @@ class VidMuseAPI {
   }
 
   async studioUpdatePlan(
-    scenes: Array<{ index: number; prompt?: string; type?: string }>
+    scenes: Array<{
+      index: number;
+      prompt?: string;
+      type?: string;
+      video_engine?: string | null;
+    }>
   ): Promise<any> {
     if (!this.sessionId) throw new Error("No session");
     const res = await fetch(`${SERVER_URL}/api/studio/update-plan`, {
@@ -308,6 +314,69 @@ class VidMuseAPI {
       body: JSON.stringify({ session_id: this.sessionId, scenes }),
     });
     return parseJson(res);
+  }
+
+  async cancelStudioRender(): Promise<any> {
+    if (!this.sessionId) throw new Error("No session");
+    const res = await fetch(`${SERVER_URL}/api/studio/cancel-render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: this.sessionId }),
+    });
+    return parseJson(res);
+  }
+
+  async enhancePrompt(
+    sceneIndex: number,
+    options?: { prompt?: string; direction?: string }
+  ): Promise<any> {
+    if (!this.sessionId) throw new Error("No session");
+    const res = await fetch(`${SERVER_URL}/api/studio/enhance-prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: this.sessionId,
+        scene_index: sceneIndex,
+        prompt: options?.prompt,
+        direction: options?.direction,
+      }),
+    });
+    return parseJson(res);
+  }
+
+  async listMedia(): Promise<any> {
+    if (!this.sessionId) throw new Error("No session");
+    const res = await fetch(
+      `${SERVER_URL}/api/studio/${this.sessionId}/media`
+    );
+    return parseJson(res);
+  }
+
+  async useMediaAsRef(name: string, kind: string): Promise<any> {
+    if (!this.sessionId) throw new Error("No session");
+    const res = await fetch(`${SERVER_URL}/api/studio/media/use-as-ref`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: this.sessionId,
+        name,
+        kind,
+      }),
+    });
+    return parseJson(res);
+  }
+
+  async resumeProject(sessionId: string): Promise<any> {
+    const res = await fetch(`${SERVER_URL}/api/projects/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    const data = await parseJson(res);
+    this.clearSession();
+    this.sessionId = data.session_id;
+    this.connectWebSocket(data.session_id);
+    return data;
   }
 
   async studioRender(

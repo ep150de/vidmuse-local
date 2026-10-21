@@ -68,9 +68,23 @@ const FAL_DRAFT_ONLY_MODELS: VideoModel[] = [
   "hybrid_ltx",
 ];
 
-function RecentProjects() {
+function RecentProjects({
+  onResume,
+  disabled,
+}: {
+  onResume: (sessionId: string) => void;
+  disabled?: boolean;
+}) {
   const [projects, setProjects] = useState<
-    Array<{ session_id: string; creative_direction?: string; has_final?: boolean }>
+    Array<{
+      session_id: string;
+      creative_direction?: string;
+      track_title?: string;
+      has_final?: boolean;
+      has_plan?: boolean;
+      ready_count?: number;
+      scene_count?: number;
+    }>
   >([]);
   useEffect(() => {
     api
@@ -83,20 +97,37 @@ function RecentProjects() {
     <div className="recent-projects">
       <p className="studio-label">Recent projects</p>
       <ul>
-        {projects.slice(0, 6).map((p) => (
+        {projects.slice(0, 8).map((p) => (
           <li key={p.session_id}>
-            <span className="recent-id">{p.session_id.slice(0, 8)}</span>
-            <span className="recent-dir">
-              {(p.creative_direction || "Untitled").slice(0, 48)}
-            </span>
-            {p.has_final ? <span className="recent-ready">ready</span> : null}
+            <button
+              type="button"
+              className="recent-resume"
+              disabled={disabled}
+              onClick={() => onResume(p.session_id)}
+            >
+              <span className="recent-id">{p.session_id.slice(0, 8)}</span>
+              <span className="recent-dir">
+                {(
+                  p.track_title ||
+                  p.creative_direction ||
+                  "Untitled"
+                ).slice(0, 48)}
+              </span>
+              {typeof p.ready_count === "number" &&
+              typeof p.scene_count === "number" &&
+              p.scene_count > 0 ? (
+                <span className="recent-meta">
+                  {p.ready_count}/{p.scene_count}
+                </span>
+              ) : p.has_plan ? (
+                <span className="recent-meta">plan</span>
+              ) : null}
+              {p.has_final ? <span className="recent-ready">ready</span> : null}
+            </button>
           </li>
         ))}
       </ul>
-      <p className="drop-hint">
-        Resume: reopen the same session folder under outputs/ or re-upload and
-        replan — full in-app resume loads next.
-      </p>
+      <p className="drop-hint">Click a project to resume from outputs/</p>
     </div>
   );
 }
@@ -155,6 +186,27 @@ export function StudioApp({ serverHealth }: Props) {
   const [showFinal, setShowFinal] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [renderFailed, setRenderFailed] = useState(false);
+  const [renderEstimate, setRenderEstimate] = useState<{
+    scenes_to_render?: number;
+    scenes_ready?: number;
+    scene_total?: number;
+    per_scene?: string;
+    cost_hint?: string;
+    est_minutes_low?: number;
+    est_minutes_high?: number;
+    note?: string;
+  } | null>(null);
+  const [queueInfo, setQueueInfo] = useState<{
+    ready?: number;
+    remaining?: number;
+    scene_total?: number;
+    cancel_requested?: boolean;
+  } | null>(null);
+  const [enhancing, setEnhancing] = useState(false);
+  const [mediaItems, setMediaItems] = useState<
+    Array<{ kind: string; name: string; url: string }>
+  >([]);
+  const [mediaBusy, setMediaBusy] = useState(false);
 
   const scenes = plan?.scenes || [];
   const selectedScene: StudioScene | null =
@@ -359,10 +411,20 @@ export function StudioApp({ serverHealth }: Props) {
         }
         setBusy(false);
         setRenderFailed(false);
+        setQueueInfo(null);
         setPhase("done");
         setStatus("done");
         setProgressPct(100);
         setProgressLabel("Full cut ready");
+      }
+      if (data.type === "studio_cancelled") {
+        if (data.timeline_plan) setPlan(data.timeline_plan);
+        if (data.download_url) setDownloadUrl(mediaUrl(data.download_url));
+        setBusy(false);
+        setRenderFailed(true);
+        setPhase("review");
+        setStatus("studio_cancelled");
+        setProgressLabel("Render cancelled — resume remaining scenes when ready");
       }
       if (data.type === "studio_error") {
         setBusy(false);
@@ -387,8 +449,27 @@ export function StudioApp({ serverHealth }: Props) {
         if (state.timeline_plan) setPlan(state.timeline_plan);
         if (state.download_url) setDownloadUrl(mediaUrl(state.download_url));
         if (state.status) setStatus(state.status);
-        if (state.status === "done" || state.status === "studio_failed") {
+        if (state.queue) {
+          setQueueInfo(state.queue);
+          const q = state.queue;
+          const total = q.scene_total || 0;
+          const ready = q.ready || 0;
+          if (total > 0) {
+            setProgressPct(Math.min(95, Math.round((ready / total) * 100)));
+            setProgressLabel(
+              q.cancel_requested
+                ? `Cancelling after current scene… (${ready}/${total} ready)`
+                : `Rendering ${ready} of ${total} · ${q.remaining || 0} left`
+            );
+          }
+        }
+        if (
+          state.status === "done" ||
+          state.status === "studio_failed" ||
+          state.status === "studio_cancelled"
+        ) {
           setBusy(false);
+          setQueueInfo(null);
           if (state.status === "done") {
             setRenderFailed(false);
             setPhase("done");
@@ -405,6 +486,43 @@ export function StudioApp({ serverHealth }: Props) {
     }, 4000);
     return () => window.clearInterval(id);
   }, [phase, sessionReady]);
+
+  useEffect(() => {
+    if (!(phase === "review" || phase === "done") || !sessionReady) {
+      setRenderEstimate(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .estimateRender()
+      .then((est) => {
+        if (!cancelled) setRenderEstimate(est);
+      })
+      .catch(() => {
+        if (!cancelled) setRenderEstimate(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, sessionReady, remainingCount, videoModel, pipelineVideo, plan]);
+
+  useEffect(() => {
+    if (!(phase === "review" || phase === "done") || !sessionReady || uiMode !== "advanced") {
+      return;
+    }
+    let cancelled = false;
+    api
+      .listMedia()
+      .then((res) => {
+        if (!cancelled) setMediaItems(res.items || []);
+      })
+      .catch(() => {
+        if (!cancelled) setMediaItems([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, sessionReady, uiMode, plan, readyCount, stillCount]);
 
   const ensureSession = useCallback(async () => {
     if (api.getSessionId()) {
@@ -631,6 +749,9 @@ export function StudioApp({ serverHealth }: Props) {
       setDownloadUrl(null);
       setShowFinal(false);
       setRenderFailed(false);
+      setRenderEstimate(null);
+      setQueueInfo(null);
+      setMediaItems([]);
       setProgressLabel("");
       setProgressPct(0);
       setStatus("idle");
@@ -691,9 +812,133 @@ export function StudioApp({ serverHealth }: Props) {
         index: s.index,
         prompt: s.prompt,
         type: s.type,
+        video_engine: s.video_engine ?? null,
       }))
     );
   }, [plan]);
+
+  const handleResumeProject = useCallback(async (sessionId: string) => {
+    setError(null);
+    setBusy(true);
+    setProgressLabel("Resuming project…");
+    try {
+      const data = await api.resumeProject(sessionId);
+      setSessionReady(true);
+      const title =
+        String(data.track_title || sessionId.slice(0, 8)).trim() || "Resumed";
+      // Placeholder file so the studio treats this as an active project
+      setAudioFile(new File([], `${title}.mp3`, { type: "audio/mpeg" }));
+      setTrackTitle(title);
+      setDuration(Number(data.duration) || 0);
+      setDirection(String(data.creative_direction || ""));
+      setLyrics(String(data.lyrics || ""));
+      const look = data.singer_profile?.look;
+      if (look) setPerformerLook(String(look));
+      if (data.pipeline_director) setPipelineDirector(data.pipeline_director);
+      if (data.pipeline_stills) setPipelineStills(data.pipeline_stills);
+      if (data.pipeline_video) {
+        setPipelineVideo(data.pipeline_video);
+        coerceFalDraftEngine(
+          data.pipeline_video,
+          (data.video_model as VideoModel) || "minimax-h3"
+        );
+      } else if (data.video_model) {
+        setVideoModel(data.video_model as VideoModel);
+      }
+      if (data.comfy_url) setComfyUrl(String(data.comfy_url));
+      if (data.home_agent_url) setHomeAgentUrl(String(data.home_agent_url));
+      if (data.hermes_url) setHermesUrl(String(data.hermes_url));
+      setPipelinePreset("custom");
+      const resumedPlan = data.timeline_plan as TimelinePlan | null;
+      setPlan(resumedPlan);
+      setPlanStale(false);
+      if (resumedPlan?.scenes?.length) {
+        setSelectedIndex(resumedPlan.scenes[0].index);
+        const ready = resumedPlan.scenes.filter(
+          (s) => s.status === "ready" || s.video_url
+        ).length;
+        if (data.download_url) {
+          setDownloadUrl(mediaUrl(data.download_url));
+          setPhase(ready >= resumedPlan.scenes.length ? "done" : "review");
+          setShowFinal(ready >= resumedPlan.scenes.length);
+        } else {
+          setPhase("review");
+        }
+        setRenderFailed(
+          resumedPlan.scenes.some(
+            (s) => s.status === "failed" || s.status === "still_failed"
+          )
+        );
+      } else {
+        setPhase("brief");
+      }
+      setStatus(String(data.status || "resumed"));
+      setProgressPct(0);
+      setProgressLabel("Project resumed from disk");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [coerceFalDraftEngine]);
+
+  const handleCancelRender = useCallback(async () => {
+    try {
+      await api.cancelStudioRender();
+      setProgressLabel("Cancel requested — finishing current scene…");
+      setQueueInfo((q) => (q ? { ...q, cancel_requested: true } : q));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const handleEnhancePrompt = useCallback(async () => {
+    if (selectedIndex == null || !selectedScene) return;
+    setEnhancing(true);
+    setError(null);
+    try {
+      await ensureSession();
+      const res = await api.enhancePrompt(selectedIndex, {
+        prompt: selectedScene.prompt,
+        direction,
+      });
+      if (res.timeline_plan) setPlan(res.timeline_plan);
+      else if (res.prompt && plan) {
+        setPlan({
+          ...plan,
+          scenes: plan.scenes.map((s) =>
+            s.index === selectedIndex ? { ...s, prompt: res.prompt } : s
+          ),
+        });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEnhancing(false);
+    }
+  }, [direction, ensureSession, plan, selectedIndex, selectedScene]);
+
+  const handleUseMediaAsRef = useCallback(
+    async (item: { kind: string; name: string }) => {
+      if (item.kind === "clip") {
+        setError("Use a still or identity frame as reference — not a clip");
+        return;
+      }
+      setMediaBusy(true);
+      setError(null);
+      try {
+        await api.useMediaAsRef(item.name, item.kind);
+        const res = await api.listMedia();
+        setMediaItems(res.items || []);
+        setProgressLabel(`Added ${item.name} as reference`);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setMediaBusy(false);
+      }
+    },
+    []
+  );
 
   const startFullRender = useCallback(async () => {
     if (!plan?.scenes?.length) {
@@ -1146,7 +1391,10 @@ export function StudioApp({ serverHealth }: Props) {
               <p className="drop-title">Drop your MP3 here</p>
               <p className="drop-hint">or click to choose a file</p>
             </div>
-            <RecentProjects />
+            <RecentProjects
+              onResume={handleResumeProject}
+              disabled={busy}
+            />
           </section>
         ) : (
           <div className="project-stack">
@@ -1254,8 +1502,55 @@ export function StudioApp({ serverHealth }: Props) {
                     Back to review
                   </button>
                 )}
+                {phase === "rendering" && (
+                  <button
+                    type="button"
+                    className="studio-btn studio-btn-ghost"
+                    onClick={handleCancelRender}
+                    disabled={Boolean(queueInfo?.cancel_requested)}
+                  >
+                    <X className="w-4 h-4" aria-hidden="true" />
+                    {queueInfo?.cancel_requested ? "Cancelling…" : "Cancel render"}
+                  </button>
+                )}
               </div>
             </section>
+
+            {(phase === "review" || phase === "done" || phase === "brief") &&
+              renderEstimate &&
+              (renderEstimate.scenes_to_render != null ||
+                renderEstimate.scene_total != null) && (
+                <div className="credits-strip" role="status">
+                  <span className="credits-main">
+                    {renderEstimate.scenes_to_render
+                      ? `${renderEstimate.scenes_to_render} job(s) · ${renderEstimate.cost_hint || renderEstimate.per_scene || "estimate"}`
+                      : "All clips ready — reassemble only"}
+                  </span>
+                  <span className="credits-meta">
+                    {renderEstimate.scenes_ready != null
+                      ? `${renderEstimate.scenes_ready}/${renderEstimate.scene_total ?? scenes.length} ready`
+                      : null}
+                    {renderEstimate.scenes_to_render
+                      ? ` · ~${renderEstimate.est_minutes_low}–${renderEstimate.est_minutes_high} min`
+                      : ""}
+                  </span>
+                </div>
+              )}
+
+            {phase === "rendering" && queueInfo && (
+              <div className="credits-strip queue-strip" role="status">
+                <span className="credits-main">
+                  Queue {queueInfo.ready ?? readyCount}/
+                  {queueInfo.scene_total ?? scenes.length}
+                  {queueInfo.cancel_requested ? " · cancel pending" : ""}
+                </span>
+                <span className="credits-meta">
+                  {(queueInfo.remaining ?? remainingCount) > 0
+                    ? `${queueInfo.remaining ?? remainingCount} remaining`
+                    : "assembling"}
+                </span>
+              </div>
+            )}
 
             <div className="project-menu" role="toolbar" aria-label="Project">
               <button
@@ -1971,6 +2266,20 @@ export function StudioApp({ serverHealth }: Props) {
                     Scene {selectedScene.index + 1} prompt
                   </h2>
                   <div className="scene-tools">
+                    {uiMode === "advanced" && (
+                      <button
+                        type="button"
+                        className="studio-btn studio-btn-ghost"
+                        disabled={locked || enhancing}
+                        onClick={handleEnhancePrompt}
+                      >
+                        <Sparkles
+                          className={`w-3.5 h-3.5 ${enhancing ? "animate-spin" : ""}`}
+                          aria-hidden="true"
+                        />
+                        {enhancing ? "Enhancing…" : "Enhance prompt"}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="studio-btn studio-btn-ghost"
@@ -1997,6 +2306,35 @@ export function StudioApp({ serverHealth }: Props) {
                     </button>
                   </div>
                 </div>
+                {uiMode === "advanced" && (
+                  <label className="engine-override">
+                    <span className="studio-label">Video engine</span>
+                    <select
+                      className="studio-field"
+                      value={selectedScene.video_engine || "auto"}
+                      disabled={locked}
+                      onChange={(e) => {
+                        if (!plan || selectedIndex == null) return;
+                        const raw = e.target.value;
+                        const next =
+                          raw === "auto" ? null : (raw as StudioScene["video_engine"]);
+                        setPlan({
+                          ...plan,
+                          scenes: plan.scenes.map((s) =>
+                            s.index === selectedIndex
+                              ? { ...s, video_engine: next }
+                              : s
+                          ),
+                        });
+                      }}
+                    >
+                      <option value="auto">Auto (from project engine)</option>
+                      <option value="minimax-h3">H3 Ref2VA</option>
+                      <option value="fasth3">FastH3 draft</option>
+                      <option value="ltx23">LTX-2.3</option>
+                    </select>
+                  </label>
+                )}
                 <textarea
                   className="studio-field"
                   rows={5}
@@ -2015,10 +2353,59 @@ export function StudioApp({ serverHealth }: Props) {
                 />
                 <p className="credit-note">
                   Update still = image credits. Re-render clip / Preview scene =
-                  1 H3 video job. Render full = only remaining queued scenes.
+                  1 video job. Render full = only remaining queued scenes.
+                  {uiMode === "advanced"
+                    ? " Enhance prompt uses the director LLM (no image/video credits)."
+                    : ""}
                 </p>
               </section>
             )}
+
+            {uiMode === "advanced" &&
+              (phase === "review" || phase === "done") &&
+              mediaItems.length > 0 && (
+                <section className="media-bin studio-panel" aria-label="Media bin">
+                  <div className="scene-tools-head">
+                    <h2 className="text-sm font-semibold">Media bin</h2>
+                    <span className="credit-note !mt-0">
+                      Click a still to use as performer reference
+                    </span>
+                  </div>
+                  <div className="media-bin-rail">
+                    {mediaItems.map((item) => (
+                      <button
+                        key={`${item.kind}-${item.name}`}
+                        type="button"
+                        className={`media-bin-card kind-${item.kind}`}
+                        disabled={locked || mediaBusy || item.kind === "clip"}
+                        title={
+                          item.kind === "clip"
+                            ? item.name
+                            : `Use ${item.name} as reference`
+                        }
+                        onClick={() => handleUseMediaAsRef(item)}
+                      >
+                        {item.kind === "clip" ? (
+                          <video
+                            src={mediaUrl(item.url)}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            className="media-bin-thumb"
+                          />
+                        ) : (
+                          <img
+                            src={mediaUrl(item.url)}
+                            alt=""
+                            className="media-bin-thumb"
+                          />
+                        )}
+                        <span className="media-bin-label">{item.kind}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
 
             {phase === "brief" && (
               <p className="credit-note">

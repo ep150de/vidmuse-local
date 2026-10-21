@@ -244,10 +244,25 @@ def _write_project_manifest(session_id: str, session: Dict[str, Any]) -> None:
     """Persist portable project state and asset provenance for later resume/QC."""
     session_dir = OUTPUT_DIR / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
+    plan = session.get("timeline_plan") or {}
+    scenes = plan.get("scenes") or []
+    ready = sum(
+        1 for s in scenes if s.get("status") == "ready" and s.get("video_path")
+    )
     payload = {
         "session_id": session_id,
+        "status": session.get("status") or "created",
         "project_mode": session.get("project_mode") or "mtv",
         "creative_direction": session.get("creative_direction") or "",
+        "lyrics": (session.get("lyrics") or "")[:8000],
+        "singer_profile": session.get("singer_profile") or {},
+        "video_model": session.get("video_model")
+        or session.get("video_backend")
+        or "minimax-h3",
+        "video_backend": session.get("video_backend") or "minimax-h3",
+        "identity_sheet_path": session.get("identity_sheet_path"),
+        "reference_images": session.get("reference_images") or [],
+        "final_video_path": session.get("final_video_path"),
         "comfy": {
             "backend": session.get("comfy_backend") or COMFYUI_BACKEND or "local",
             "url": session.get("comfy_url") or COMFYUI_URL,
@@ -256,6 +271,9 @@ def _write_project_manifest(session_id: str, session: Dict[str, Any]) -> None:
             "director": session.get("pipeline_director") or "cloud_llm",
             "stills": session.get("pipeline_stills") or "comfy",
             "video": session.get("pipeline_video") or "comfy_cloud",
+            "video_model": session.get("video_model")
+            or session.get("video_backend")
+            or "minimax-h3",
             "home_agent_url": session.get("home_agent_url") or "",
             "hermes_url": session.get("hermes_url") or "",
         },
@@ -275,6 +293,13 @@ def _write_project_manifest(session_id: str, session: Dict[str, Any]) -> None:
                 "coverage_timeline"
             ),
         },
+        "timeline": {
+            "scene_count": len(scenes),
+            "ready_count": ready,
+            "review_status": plan.get("review_status"),
+            "duration": plan.get("duration"),
+            "character_lock": plan.get("character_lock") or plan.get("character"),
+        },
         "selected_concept": session.get("selected_concept"),
         "visual_bible": session.get("visual_bible"),
         "concepts": session.get("concepts") or [],
@@ -285,6 +310,188 @@ def _write_project_manifest(session_id: str, session: Dict[str, Any]) -> None:
         json.dumps(payload, indent=2, default=str),
         encoding="utf-8",
     )
+
+
+def _refresh_plan_asset_urls(session_id: str, plan: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Rebuild still/video/identity URLs from on-disk paths after resume."""
+    if not plan:
+        return {"scenes": [], "duration": 0}
+    session_dir = (OUTPUT_DIR / session_id).resolve()
+    for sc in plan.get("scenes") or []:
+        still = sc.get("still_path")
+        if still:
+            p = Path(still)
+            if not p.is_file() and not p.is_absolute():
+                p = Path(still)
+            if p.is_file():
+                try:
+                    p.resolve().relative_to(session_dir)
+                    sc["still_url"] = (
+                        f"/api/session/{session_id}/asset/storyboard/{p.name}"
+                    )
+                except ValueError:
+                    pass
+        video = sc.get("video_path")
+        if video:
+            p = Path(video)
+            if p.is_file():
+                try:
+                    p.resolve().relative_to(session_dir)
+                    sc["video_url"] = (
+                        f"/api/session/{session_id}/asset/video/{p.name}"
+                    )
+                    if sc.get("status") != "ready":
+                        sc["status"] = "ready"
+                except ValueError:
+                    pass
+    identity = plan.get("identity_sheet_path")
+    if not identity:
+        # Prefer session identity/ folder
+        identity_dir = session_dir / "identity"
+        if identity_dir.is_dir():
+            for cand in sorted(identity_dir.glob("*")):
+                if cand.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                    identity = str(cand)
+                    break
+    if identity and Path(identity).is_file():
+        plan["identity_sheet_path"] = identity
+        plan["identity_sheet_url"] = (
+            f"/api/session/{session_id}/asset/identity/{Path(identity).name}"
+        )
+    return plan
+
+
+def _load_session_from_disk(session_id: str) -> Dict[str, Any]:
+    """Hydrate an in-memory session from outputs/<session_id>/."""
+    session_dir = OUTPUT_DIR / session_id
+    if not session_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Project not found on disk")
+
+    manifest: Dict[str, Any] = {}
+    manifest_path = session_dir / "project.json"
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            manifest = {}
+
+    audio_path = None
+    for name in ("audio.mp3", "audio.wav", "audio.m4a", "audio.flac"):
+        cand = session_dir / name
+        if cand.is_file():
+            audio_path = str(cand)
+            break
+    if not audio_path:
+        recorded = (manifest.get("audio") or {}).get("path")
+        if recorded and Path(recorded).is_file():
+            audio_path = recorded
+        elif recorded:
+            # Relative path from repo root
+            rel = Path(recorded)
+            if rel.is_file():
+                audio_path = str(rel.resolve())
+
+    analysis = (manifest.get("audio") or {}).get("analysis") or {}
+    if not analysis and audio_path:
+        try:
+            analysis = AudioAnalyzer.analyze(audio_path)
+        except Exception:
+            analysis = {"duration": 0, "track_title": session_id[:8]}
+
+    plan = None
+    plan_path = session_dir / "timeline_plan.json"
+    if plan_path.is_file():
+        try:
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        except Exception:
+            plan = None
+    if plan:
+        plan = _refresh_plan_asset_urls(session_id, plan)
+
+    pipeline = manifest.get("pipeline") or {}
+    comfy = manifest.get("comfy") or {}
+    refs = list(manifest.get("reference_images") or [])
+    ref_dir = session_dir / "references"
+    if ref_dir.is_dir():
+        for p in sorted(ref_dir.glob("*")):
+            if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") and str(p) not in refs:
+                refs.append(str(p))
+
+    identity_path = manifest.get("identity_sheet_path")
+    if plan and plan.get("identity_sheet_path"):
+        identity_path = plan["identity_sheet_path"]
+    if not identity_path:
+        identity_dir = session_dir / "identity"
+        if identity_dir.is_dir():
+            for cand in sorted(identity_dir.glob("*")):
+                if cand.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                    identity_path = str(cand)
+                    break
+
+    finals = list(session_dir.glob("vidmuse_*.mp4")) + list(
+        session_dir.glob("*_final.mp4")
+    )
+    final_path = manifest.get("final_video_path")
+    if not final_path or not Path(str(final_path)).is_file():
+        final_path = str(finals[0]) if finals else None
+
+    from server.pipeline import normalize_video_model
+
+    video_model = normalize_video_model(
+        manifest.get("video_model")
+        or pipeline.get("video_model")
+        or manifest.get("video_backend")
+        or "minimax-h3"
+    )
+
+    session: Dict[str, Any] = {
+        "session_id": session_id,
+        "status": manifest.get("status")
+        or ("done" if final_path else ("review" if plan else "analyzed")),
+        "chat_history": [],
+        "audio_path": audio_path,
+        "audio_analysis": analysis,
+        "reference_images": refs,
+        "concepts": manifest.get("concepts") or [],
+        "selected_concept": manifest.get("selected_concept"),
+        "storyboard": manifest.get("storyboard") or [],
+        "concept_prompt": manifest.get("creative_direction") or "",
+        "creative_direction": manifest.get("creative_direction") or "",
+        "lyrics": manifest.get("lyrics")
+        or (analysis.get("lyrics") if isinstance(analysis, dict) else "")
+        or "",
+        "singer_profile": manifest.get("singer_profile") or {},
+        "video_backend": video_model
+        if video_model in ("minimax-h3", "ltx23", "fasth3")
+        else "minimax-h3",
+        "video_model": video_model,
+        "project_mode": manifest.get("project_mode") or "mtv",
+        "performance_mix": "performance",
+        "comfy_backend": comfy.get("backend") or COMFYUI_BACKEND,
+        "comfy_url": comfy.get("url")
+        or (COMFY_CLOUD_URL if COMFYUI_BACKEND == "cloud" else COMFYUI_URL),
+        "pipeline_director": pipeline.get("director") or "cloud_llm",
+        "pipeline_stills": pipeline.get("stills") or "comfy",
+        "pipeline_video": pipeline.get("video") or "comfy_cloud",
+        "home_agent_url": pipeline.get("home_agent_url") or "",
+        "hermes_url": pipeline.get("hermes_url") or "",
+        "timeline_plan": plan,
+        "identity_sheet_path": identity_path,
+        "final_video_path": final_path,
+        "visual_bible": manifest.get("visual_bible"),
+        "technical_qc": manifest.get("technical_qc"),
+        "resumed_from_disk": True,
+    }
+    legacy_sessions[session_id] = session
+
+    # Warm director so later studio calls see the plan
+    director = _get_director(session_id)
+    _hydrate_director(director, session)
+    if plan:
+        director.timeline_plan = plan
+    if identity_path:
+        director.identity_sheet_path = identity_path
+    return session
 
 # ─── WEBSOCKET MANAGER ─────────────────────────────────────────────────
 
@@ -1687,6 +1894,18 @@ async def studio_update_plan(request: dict):
             scene["prompt"] = str(item.get("prompt") or "")[:4000]
         if item.get("type") is not None:
             scene["type"] = str(item.get("type") or scene.get("type"))[:40]
+        if "video_engine" in item or "engine_override" in item:
+            raw = item.get("video_engine") or item.get("engine_override")
+            if raw is None or str(raw).strip() in ("", "auto", "default"):
+                scene.pop("video_engine", None)
+            else:
+                from server.pipeline import normalize_video_model
+
+                eng = normalize_video_model(raw)
+                if eng in ("minimax-h3", "fasth3", "ltx23"):
+                    scene["video_engine"] = eng
+                else:
+                    scene.pop("video_engine", None)
 
     plan_path = director.output_dir / "timeline_plan.json"
     plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
@@ -1715,6 +1934,7 @@ async def studio_render(request: dict):
     rebuild = bool(request.get("rebuild_plan", True))
     director = _get_director(session_id)
     _hydrate_director(director, session)
+    director.clear_studio_cancel()
     if not director.timeline_plan and session.get("timeline_plan"):
         director.timeline_plan = session["timeline_plan"]
     # Apply any last-minute prompt edits from the client
@@ -1749,19 +1969,21 @@ async def studio_render(request: dict):
             if director.identity_sheet_path:
                 session["identity_sheet_path"] = director.identity_sheet_path
             session["final_video_path"] = result.get("final_video_path")
-            session["status"] = "done"
+            cancelled = bool(result.get("cancelled"))
+            session["status"] = "studio_cancelled" if cancelled else "done"
             _write_project_manifest(session_id, session)
             if session_id in connected_clients:
                 try:
-                    await connected_clients[session_id].send_json(
-                        {
-                            "type": "studio_complete",
-                            "timeline_plan": _studio_plan_public(
-                                session_id, director.timeline_plan
-                            ),
-                            "download_url": f"/api/download/{session_id}",
-                        }
-                    )
+                    payload = {
+                        "type": "studio_cancelled" if cancelled else "studio_complete",
+                        "timeline_plan": _studio_plan_public(
+                            session_id, director.timeline_plan
+                        ),
+                        "cancelled": cancelled,
+                    }
+                    if session.get("final_video_path"):
+                        payload["download_url"] = f"/api/download/{session_id}"
+                    await connected_clients[session_id].send_json(payload)
                 except Exception:
                     pass
         except Exception as exc:
@@ -1784,6 +2006,18 @@ async def studio_render(request: dict):
             session_id, session.get("timeline_plan") or director.timeline_plan
         ),
     }
+
+
+@app.post("/api/studio/cancel-render")
+async def studio_cancel_render(request: dict):
+    """Request cancel of an in-flight studio full render (stops before next scene)."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    director = active_directors.get(session_id) or _get_director(session_id)
+    director.request_studio_cancel()
+    return {"session_id": session_id, "status": "cancel_requested"}
 
 
 @app.post("/api/studio/render-scene")
@@ -1861,6 +2095,18 @@ async def studio_state(session_id: str):
     if director and director.timeline_plan:
         plan = director.timeline_plan
         session["timeline_plan"] = plan
+    scenes = (plan or {}).get("scenes") or []
+    ready = sum(
+        1 for s in scenes if s.get("status") == "ready" and s.get("video_path")
+    )
+    rendering = sum(1 for s in scenes if s.get("status") == "rendering")
+    failed = sum(1 for s in scenes if s.get("status") == "failed")
+    remaining = sum(
+        1 for s in scenes if s.get("status") != "ready" or not s.get("video_path")
+    )
+    cancel_requested = bool(
+        director and getattr(director, "_studio_cancel", False)
+    )
     return {
         "session_id": session_id,
         "status": session.get("status"),
@@ -1875,6 +2121,14 @@ async def studio_state(session_id: str):
         "comfy_backend": session.get("comfy_backend"),
         "comfy_url": session.get("comfy_url"),
         "has_references": bool(session.get("reference_images")),
+        "queue": {
+            "scene_total": len(scenes),
+            "ready": ready,
+            "rendering": rendering,
+            "failed": failed,
+            "remaining": remaining,
+            "cancel_requested": cancel_requested,
+        },
     }
 
 
@@ -1904,28 +2158,121 @@ async def list_projects():
     projects = []
     if not OUTPUT_DIR.is_dir():
         return {"projects": []}
-    for path in sorted(OUTPUT_DIR.glob("*/project.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+    # Prefer folders that have project.json OR timeline_plan.json OR audio
+    candidates = set()
+    for path in OUTPUT_DIR.iterdir():
+        if not path.is_dir():
             continue
-        sid = data.get("session_id") or path.parent.name
-        final = path.parent / f"vidmuse_{sid}.mp4"
-        # Also accept any assembled mp4
-        finals = list(path.parent.glob("vidmuse_*.mp4")) + list(path.parent.glob("*_final.mp4"))
+        if (
+            (path / "project.json").is_file()
+            or (path / "timeline_plan.json").is_file()
+            or (path / "audio.mp3").is_file()
+        ):
+            candidates.add(path)
+    for path in sorted(
+        candidates,
+        key=lambda p: (
+            (p / "project.json").stat().st_mtime
+            if (p / "project.json").is_file()
+            else p.stat().st_mtime
+        ),
+        reverse=True,
+    ):
+        data: Dict[str, Any] = {}
+        manifest = path / "project.json"
+        if manifest.is_file():
+            try:
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        sid = data.get("session_id") or path.name
+        finals = list(path.glob("vidmuse_*.mp4")) + list(path.glob("*_final.mp4"))
+        timeline = data.get("timeline") or {}
+        scene_count = timeline.get("scene_count")
+        ready_count = timeline.get("ready_count")
+        if scene_count is None and (path / "timeline_plan.json").is_file():
+            try:
+                plan = json.loads((path / "timeline_plan.json").read_text(encoding="utf-8"))
+                scenes = plan.get("scenes") or []
+                scene_count = len(scenes)
+                ready_count = sum(
+                    1 for s in scenes if s.get("status") == "ready" and s.get("video_path")
+                )
+            except Exception:
+                pass
+        track = ((data.get("audio") or {}).get("analysis") or {}).get("track_title")
+        if not track:
+            track = ((data.get("audio") or {}).get("analysis") or {}).get(
+                "original_filename"
+            )
         projects.append(
             {
                 "session_id": sid,
                 "creative_direction": (data.get("creative_direction") or "")[:160],
+                "track_title": track,
                 "pipeline": data.get("pipeline") or {},
                 "comfy": data.get("comfy") or {},
-                "has_final": final.is_file() or any(f.is_file() for f in finals),
-                "mtime": path.stat().st_mtime,
+                "has_final": any(f.is_file() for f in finals),
+                "has_audio": (path / "audio.mp3").is_file()
+                or bool((data.get("audio") or {}).get("path")),
+                "has_plan": (path / "timeline_plan.json").is_file(),
+                "scene_count": scene_count,
+                "ready_count": ready_count,
+                "mtime": (
+                    manifest.stat().st_mtime
+                    if manifest.is_file()
+                    else path.stat().st_mtime
+                ),
             }
         )
         if len(projects) >= 24:
             break
     return {"projects": projects}
+
+
+@app.post("/api/projects/resume")
+async def resume_project(request: dict):
+    """Load a prior outputs/<session_id> project into memory for in-app resume."""
+    session_id = str(request.get("session_id") or "").strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+    # Basic path-safety: session ids are UUIDs / simple folder names
+    if "/" in session_id or "\\" in session_id or ".." in session_id:
+        raise HTTPException(status_code=400, detail="Invalid session_id")
+    session = _load_session_from_disk(session_id)
+    if not session.get("audio_path"):
+        raise HTTPException(
+            status_code=400,
+            detail="Project has no audio on disk — cannot resume",
+        )
+    _write_project_manifest(session_id, session)
+    plan = session.get("timeline_plan")
+    analysis = session.get("audio_analysis") or {}
+    return {
+        "session_id": session_id,
+        "status": session.get("status"),
+        "creative_direction": session.get("creative_direction") or "",
+        "lyrics": session.get("lyrics") or "",
+        "singer_profile": session.get("singer_profile") or {},
+        "track_title": analysis.get("track_title")
+        or analysis.get("original_filename")
+        or session_id[:8],
+        "duration": analysis.get("duration") or 0,
+        "pipeline_director": session.get("pipeline_director"),
+        "pipeline_stills": session.get("pipeline_stills"),
+        "pipeline_video": session.get("pipeline_video"),
+        "video_model": session.get("video_model"),
+        "comfy_backend": session.get("comfy_backend"),
+        "comfy_url": session.get("comfy_url"),
+        "home_agent_url": session.get("home_agent_url"),
+        "hermes_url": session.get("hermes_url"),
+        "timeline_plan": _studio_plan_public(session_id, plan),
+        "download_url": (
+            f"/api/download/{session_id}" if session.get("final_video_path") else None
+        ),
+        "has_references": bool(session.get("reference_images")),
+        "identity_sheet_url": (plan or {}).get("identity_sheet_url"),
+    }
 
 
 @app.post("/api/studio/estimate")
@@ -1940,6 +2287,9 @@ async def studio_estimate(request: dict):
         for s in scenes
         if s.get("status") != "ready" or not s.get("video_path")
     ]
+    ready = [
+        s for s in scenes if s.get("status") == "ready" and s.get("video_path")
+    ]
     video = str(
         (session or {}).get("pipeline_video")
         or request.get("pipeline_video")
@@ -1952,14 +2302,16 @@ async def studio_estimate(request: dict):
         or request.get("video_model")
         or "minimax-h3"
     )
-    n = len(remaining) if remaining else len(scenes)
+    n = len(remaining) if remaining else (0 if ready else len(scenes))
     # Rough heuristics by host + engine
     if video == "fal":
         per = "1 FAL draft clip"
         minutes = n * 2
+        cost_hint = f"~{n} FAL prepaid credit unit(s)"
     elif video == "home_agent":
         per = "1 Home Agent H3 job"
         minutes = n * 8
+        cost_hint = f"~{n} local / HA GPU job(s) (no cloud bill)"
     elif video_model in ("fasth3", "hybrid_fast"):
         per = (
             "1 FastH3 draft (PERF→H3 Ref2VA if hybrid)"
@@ -1967,6 +2319,10 @@ async def studio_estimate(request: dict):
             else "1 FastH3 8-step draft"
         )
         minutes = n * (3 if video == "comfy_cloud" else 4)
+        cost_hint = (
+            f"~{n} draft job(s)"
+            + (" + H3 for PERF scenes" if video_model == "hybrid_fast" else "")
+        )
     elif video_model in ("ltx23", "hybrid_ltx"):
         per = (
             "1 LTX IA2V (PERF→H3 Ref2VA if hybrid)"
@@ -1974,24 +2330,230 @@ async def studio_estimate(request: dict):
             else "1 LTX-2.3 IA2V job"
         )
         minutes = n * (3 if video == "comfy_cloud" else 5)
+        cost_hint = f"~{n} LTX/hybrid job(s)"
     elif video == "comfy_cloud":
         per = "1 Comfy Cloud H3 Ref2VA job"
         minutes = n * 4
+        cost_hint = f"~{n} Comfy Cloud H3 credit(s)"
     else:
         per = "1 local / Playground H3 Ref2VA job"
         minutes = n * 6
+        cost_hint = f"~{n} local GPU job(s)"
     return {
         "session_id": session_id,
         "scene_total": len(scenes),
+        "scenes_ready": len(ready),
         "scenes_to_render": n,
         "pipeline_video": video,
         "video_model": video_model,
         "per_scene": per,
-        "est_minutes_low": max(1, int(minutes * 0.6)),
-        "est_minutes_high": max(2, int(minutes * 1.4)),
+        "cost_hint": cost_hint,
+        "est_minutes_low": max(1, int(minutes * 0.6)) if n else 0,
+        "est_minutes_high": max(2, int(minutes * 1.4)) if n else 0,
         "note": (
             "Estimates are approximate. FastH3/LTX are drafts — not Ref2VA lip-sync quality."
+            if n
+            else "All scenes already have clips — reassemble only."
         ),
+    }
+
+
+@app.post("/api/studio/enhance-prompt")
+async def studio_enhance_prompt(request: dict):
+    """Optional Advanced polish for one scene prompt (H3 / LTX / FastH3 wording)."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session:
+        raise HTTPException(status_code=400, detail="Invalid session")
+    try:
+        scene_index = int(request.get("scene_index"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="scene_index required") from exc
+
+    director = _get_director(session_id)
+    _hydrate_director(director, session)
+    if not director.timeline_plan and session.get("timeline_plan"):
+        director.timeline_plan = session["timeline_plan"]
+    plan = director.timeline_plan or {}
+    scenes = plan.get("scenes") or []
+    if not (0 <= scene_index < len(scenes)):
+        raise HTTPException(status_code=400, detail="scene_index out of range")
+
+    scene = scenes[scene_index]
+    draft = str(request.get("prompt") or scene.get("prompt") or "").strip()
+    if not draft:
+        raise HTTPException(status_code=400, detail="No prompt to enhance")
+
+    from server.pipeline import normalize_video_model, resolve_scene_engine
+
+    video_model = normalize_video_model(
+        session.get("video_model") or session.get("video_backend") or "minimax-h3"
+    )
+    engine = resolve_scene_engine(
+        video_model,
+        scene.get("type"),
+        has_image=bool(scene.get("still_path") or scene.get("still_url")),
+        override=scene.get("video_engine"),
+    )
+    engine_label = {
+        "minimax-h3": "MiniMax H3 Ref2VA lip-sync performance",
+        "fasth3": "FastH3 8-step draft motion",
+        "ltx23": "LTX-2.3 image-audio-to-video",
+    }.get(engine, engine)
+    character = (
+        plan.get("character_lock")
+        or plan.get("character")
+        or (session.get("singer_profile") or {}).get("look")
+        or "lead performer"
+    )
+    direction = (
+        request.get("direction")
+        or session.get("creative_direction")
+        or plan.get("direction")
+        or ""
+    )
+    lyric = scene.get("lyric") or ""
+
+    if not director.llm:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM unavailable — set director lane / API keys to enhance prompts",
+        )
+    try:
+        polished = await director.llm.generate(
+            prompt=(
+                f"Rewrite into one {engine_label} shot prompt (45-80 words). "
+                "No on-screen text or logos. Keep the SAME performer identity. "
+                "Prefer concrete camera, lighting, wardrobe, and motion cues.\n"
+                f"Direction: {direction}\n"
+                f"Character lock: {character}\n"
+                f"Shot type: {scene.get('type')}\n"
+                f"Lyric: {lyric}\n"
+                f"Draft: {draft}"
+            ),
+            max_tokens=260,
+            temperature=0.4,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Enhance failed: {exc}") from exc
+
+    text = (polished or "").strip()
+    if len(text) < 20:
+        raise HTTPException(status_code=502, detail="Enhance returned empty prompt")
+    if "Same performer" not in text:
+        text = f"{text} Same performer: {character}."
+    scene["prompt"] = text[:4000]
+    plan_path = director.output_dir / "timeline_plan.json"
+    plan_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    director.timeline_plan = plan
+    session["timeline_plan"] = plan
+    _write_project_manifest(session_id, session)
+    return {
+        "session_id": session_id,
+        "scene_index": scene_index,
+        "prompt": scene["prompt"],
+        "engine": engine,
+        "timeline_plan": _studio_plan_public(session_id, plan),
+    }
+
+
+@app.get("/api/studio/{session_id}/media")
+async def studio_media_bin(session_id: str):
+    """List stills + clips in the session folder for media-bin reuse."""
+    session_dir = OUTPUT_DIR / session_id
+    if not session_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Session not found")
+    items = []
+    board = session_dir / "storyboard"
+    if board.is_dir():
+        for p in sorted(board.glob("studio_still_*.png")):
+            items.append(
+                {
+                    "kind": "still",
+                    "name": p.name,
+                    "url": f"/api/session/{session_id}/asset/storyboard/{p.name}",
+                }
+            )
+    identity = session_dir / "identity"
+    if identity.is_dir():
+        for p in sorted(identity.glob("*")):
+            if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                items.append(
+                    {
+                        "kind": "identity",
+                        "name": p.name,
+                        "url": f"/api/session/{session_id}/asset/identity/{p.name}",
+                    }
+                )
+    refs = session_dir / "references"
+    if refs.is_dir():
+        for p in sorted(refs.glob("*")):
+            if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
+                items.append(
+                    {
+                        "kind": "reference",
+                        "name": p.name,
+                        "url": f"/api/session/{session_id}/asset/references/{p.name}",
+                    }
+                )
+    videos = session_dir / "videos"
+    if videos.is_dir():
+        for p in sorted(videos.glob("studio_*.mp4")):
+            items.append(
+                {
+                    "kind": "clip",
+                    "name": p.name,
+                    "url": f"/api/session/{session_id}/asset/video/{p.name}",
+                }
+            )
+    return {"session_id": session_id, "items": items}
+
+
+@app.post("/api/studio/media/use-as-ref")
+async def studio_media_use_as_ref(request: dict):
+    """Copy a media-bin still/identity into references/ for identity locking."""
+    session_id = request.get("session_id")
+    session = legacy_sessions.get(session_id or "")
+    if not session:
+        # Allow resume-from-disk then use
+        try:
+            session = _load_session_from_disk(str(session_id))
+        except HTTPException:
+            raise HTTPException(status_code=400, detail="Invalid session") from None
+    name = str(request.get("name") or "").strip()
+    kind = str(request.get("kind") or "still").strip().lower()
+    if not name or "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(status_code=400, detail="Invalid asset name")
+    subdir = {
+        "still": "storyboard",
+        "identity": "identity",
+        "reference": "references",
+        "clip": "videos",
+    }.get(kind)
+    if not subdir:
+        raise HTTPException(status_code=400, detail="Unsupported media kind")
+    if kind == "clip":
+        raise HTTPException(
+            status_code=400,
+            detail="Clips cannot be used as still references — pick a still or identity",
+        )
+    src = _safe_session_asset(session_id, subdir, name)
+    dest_dir = OUTPUT_DIR / session_id / "references"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"ref_{src.stem}{src.suffix.lower()}"
+    shutil.copy2(src, dest)
+    refs = list(session.get("reference_images") or [])
+    if str(dest) not in refs:
+        refs.append(str(dest))
+    session["reference_images"] = refs
+    director = _get_director(session_id)
+    director.reference_images = list(refs)
+    _write_project_manifest(session_id, session)
+    return {
+        "session_id": session_id,
+        "reference_path": str(dest),
+        "reference_url": f"/api/session/{session_id}/asset/references/{dest.name}",
+        "reference_count": len(refs),
     }
 
 

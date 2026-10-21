@@ -18,6 +18,8 @@ export interface StudioScene {
   status: SceneStatus;
   video_url?: string | null;
   still_url?: string | null;
+  /** Concrete engine override: minimax-h3 | fasth3 | ltx23 (omit = auto) */
+  video_engine?: string | null;
   error?: string;
 }
 

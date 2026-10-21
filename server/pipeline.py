@@ -94,15 +94,30 @@ def resolve_scene_engine(
     scene_type: Any = None,
     *,
     has_image: bool = True,
+    override: Any = None,
 ) -> str:
-    """Pick concrete engine for one scene (no hybrid wrappers)."""
-    vm = normalize_video_model(video_model)
-    if vm == "hybrid_ltx":
-        engine = "minimax-h3" if is_perf_scene(scene_type) else "ltx23"
-    elif vm == "hybrid_fast":
-        engine = "minimax-h3" if is_perf_scene(scene_type) else "fasth3"
+    """Pick concrete engine for one scene (no hybrid wrappers).
+
+    ``override`` may be a concrete engine (minimax-h3 / fasth3 / ltx23) set
+    per-scene in the studio Advanced tools.
+    """
+    if override:
+        ov = normalize_video_model(override)
+        if ov in ("minimax-h3", "fasth3", "ltx23"):
+            engine = ov
+        else:
+            engine = None
     else:
-        engine = vm
+        engine = None
+
+    if engine is None:
+        vm = normalize_video_model(video_model)
+        if vm == "hybrid_ltx":
+            engine = "minimax-h3" if is_perf_scene(scene_type) else "ltx23"
+        elif vm == "hybrid_fast":
+            engine = "minimax-h3" if is_perf_scene(scene_type) else "fasth3"
+        else:
+            engine = vm
 
     # LTX IA2V needs a still; fall back to FastH3 T2V / I2V
     if engine == "ltx23" and not has_image:
