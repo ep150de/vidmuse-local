@@ -1,0 +1,46 @@
+name: scenemux
+version: "0.2.0"
+description: "SceneMux music-video studio for Hermes: turn an MP3 into a beat-aligned, lip-synced music video — plan the storyboard, render scenes on Comfy (cloud or local), and get back a muxed MP4."
+author: ep150de
+manifest_version: 2
+api_version: 1
+license: MIT
+homepage: https://github.com/ep150de/scenemux
+tags: [music-video, comfyui, media, studio, ffmpeg]
+requires_hermes: ">=0.23.0"
+provides_tools:
+  - scenemux_doctor
+  - scenemux_setup
+  - scenemux_project
+  - scenemux_plan
+  - scenemux_render
+  - scenemux_status
+  - scenemux_export
+  - scenemux_cancel
+provides_hooks: []
+requires_env:
+  - name: COMFY_CLOUD_API_KEY
+    description: "Comfy Cloud API key (cloud-mode video renderer; Standard+ plan)"
+    url: "https://platform.comfy.org/profile/api-keys"
+    secret: true
+  - name: OLLAMA_API_KEY
+    description: "Ollama Cloud API key (cloud-mode LLM/director). Not needed if Ollama runs locally — the plugin detects it and points the server at it."
+    url: "https://ollama.com/settings/keys"
+    secret: true
+  - name: OPENCODE_API_KEY
+    description: "OpenCode Go API key (optional LLM fallback)"
+    url: "https://opencode.ai/"
+    secret: true
+  - name: FAL_KEY
+    description: "FAL.ai API key (optional; draft stills/clips only, prepaid credits)"
+    url: "https://fal.ai/dashboard/keys"
+    secret: true
+config_schema:
+  base_url:
+    type: str
+    default: "http://127.0.0.1:8000"
+    description: "SceneMux server base URL"
+  mode:
+    type: str
+    default: "cloud"
+    description: "Runtime mode: cloud (any machine, Comfy Cloud + cloud LLM) or local (GPU host with ComfyUI)"
