@@ -500,6 +500,7 @@ def make_project(ctx) -> Callable[..., str]:
             video_model = str(args.get("video_model") or "").strip()
             if video_model:
                 cfg["video_model"] = video_model
+            cfg["creative_direction"] = direction
             try:
                 _call(ctx, args, "/api/session/config", cfg, timeout=client.READ_TIMEOUT)
             except SceneMuxError as e:
