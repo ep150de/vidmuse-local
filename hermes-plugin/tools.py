@@ -843,7 +843,7 @@ def make_cancel(ctx) -> Callable[..., str]:
             sid = str(args.get("session_id") or "")
             if not sid:
                 return json.dumps({"error": "session_id is required."})
-            res = _call(ctx, args, "/api/studio/cancel", {"session_id": sid}, timeout=30)
+            res = _call(ctx, args, "/api/studio/cancel-render", {"session_id": sid}, timeout=30)
             return json.dumps({"session_id": sid, "cancel_requested": True, "response": res})
         except SceneMuxError as e:
             return json.dumps({"error": str(e), "session_id": args.get("session_id")})

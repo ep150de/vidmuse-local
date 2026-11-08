@@ -80,6 +80,6 @@ Base URL: plugin setting `base_url` (default `http://127.0.0.1:8000`).
 - `POST /api/upload/audio` (multipart), `POST /api/upload/images` (repeated `files`)
 - `POST /api/studio/plan`, `POST /api/studio/storyboard-stills`,
   `POST /api/studio/estimate`, `POST /api/studio/render` (async — returns
-  immediately, poll state), `POST /api/studio/cancel`
+  immediately, poll state), `POST /api/studio/cancel-render`
 - `GET /api/studio/{session_id}/state`, `GET /api/download/{session_id}`
 - `POST /api/studio/export-vertical`
