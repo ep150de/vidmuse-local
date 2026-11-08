@@ -566,6 +566,21 @@ def make_plan(ctx) -> Callable[..., str]:
             if not _server_alive(base):
                 return _down_error(base, _mode(ctx))
 
+            # Idempotency: an existing storyboard is returned, not re-planned.
+            try:
+                pre_state = client.get_json(base, f"/api/studio/{sid}/state", timeout=30)
+                pre_plan = _extract_plan(pre_state)
+                if pre_plan.get("scenes"):
+                    return json.dumps({
+                        "session_id": sid,
+                        "already_planned": True,
+                        "scene_count": len(pre_plan["scenes"]),
+                        "scenes": _compact_scenes(pre_plan, sid),
+                        "next": "Storyboard already exists — show it to the user. Use scene_indices with this tool to (re)generate specific stills.",
+                    })
+            except SceneMuxError:
+                pass
+
             note = _load_sessions().get(sid) or {}
             direction = str(args.get("direction") or note.get("direction") or "").strip()
             payload = {"session_id": sid}
