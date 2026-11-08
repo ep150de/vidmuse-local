@@ -112,8 +112,42 @@ def _local_ollama_up(timeout: float = 1.5) -> bool:
         return False
 
 
+def _has_gpu(timeout: float = 2.0) -> bool:
+    """Best-effort: is there a discrete GPU a model could run on?"""
+    import shutil
+    import subprocess
+
+    try:
+        if shutil.which("nvidia-smi"):
+            p = subprocess.run(["nvidia-smi", "-L"], capture_output=True, timeout=timeout)
+            if p.returncode == 0 and b"GPU" in (p.stdout or b""):
+                return True
+        if shutil.which("rocm-smi"):
+            p = subprocess.run(["rocm-smi", "--showproductname"], capture_output=True, timeout=timeout)
+            if p.returncode == 0 and b"gfx" in (p.stdout or b""):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _model_params_b(model: dict) -> float:
+    """Parameter size in billions ('8.0B' -> 8.0), 0.0 when unknown."""
+    raw = str((model.get("details") or {}).get("parameter_size") or "")
+    try:
+        return float(raw.rstrip("bB"))
+    except ValueError:
+        return 0.0
+
+
 def _local_ollama_model(timeout: float = 2.0) -> str:
-    """Name of the largest local Ollama model (best local director), '' if none."""
+    """Name of the best local Ollama model for this machine, '' if none.
+
+    With a GPU: the largest model (quality wins).
+    CPU-only: the model closest to ~8B parameters — the server gives each
+    LLM call 120s, and 30B-class models on CPU time out on every call,
+    silently degrading the plan to fallback prompts.
+    """
     import urllib.request
 
     try:
@@ -121,10 +155,13 @@ def _local_ollama_model(timeout: float = 2.0) -> str:
             models = json.loads(r.read()).get("models", [])
         if not models:
             return ""
-        best = max(models, key=lambda m: m.get("size") or 0)
-        return str(best.get("name") or "")
     except Exception:
         return ""
+    if _has_gpu():
+        best = max(models, key=lambda m: m.get("size") or 0)
+    else:
+        best = min(models, key=lambda m: (abs(_model_params_b(m) - 8.0), m.get("size") or 0))
+    return str(best.get("name") or "")
 
 
 # ------------------------------------------------- server .env provisioning

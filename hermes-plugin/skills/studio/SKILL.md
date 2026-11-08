@@ -48,6 +48,10 @@ assemble.
 - Long tools: `scenemux_plan` can run 5-15 min (LLM + stills), `scenemux_project`
   1-3 min, renders take the time in the estimate. If a plan call times out,
   call `scenemux_status` — the plan often finished server-side.
+- Local-Ollama model size: the server's per-LLM-call timeout is 120s, so on a
+  CPU-only host pick a local model that answers quickly (<=~14B). 30B+ models
+  on CPU time out on every call (character lock, prompt polish) and the plan
+  degrades to fallback prompts. `scenemux_doctor` reports the configured model.
 - Home Agent port (e.g. `:8777`) is NOT the Comfy port (`:8188`).
 - Engine quality: H3 Ref2VA = true phoneme lip sync (finals); FastH3 / LTX =
   fast drafts, not Ref2VA. The `fast_draft` preset renders on LOCAL Comfy (needs
