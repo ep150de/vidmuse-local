@@ -40,7 +40,20 @@ hermes plugins install ep150de/scenemux --subdir hermes-plugin
    `scenemux_setup`, which launches the server via Docker (detached; log at
    `<HERMES_HOME>/plugin-data/scenemux/server-launch.log`) and waits for it
    to become healthy. First run builds the image (a few minutes).
-3. **Check** — `scenemux_doctor` tells you exactly what's missing, if anything.
+3. **Optional — make Hermes itself the director** — pass
+   `director_backend=hermes` to `scenemux_project` and the storyboard is
+   planned by *this* Hermes agent (its full toolset, not an external LLM
+   lane). This needs the Hermes API server:
+   ```bash
+   # add to ~/.hermes/.env, then (re)start the gateway
+   API_SERVER_ENABLED=true
+   API_SERVER_KEY=<some-long-random-key>
+   hermes gateway
+   ```
+   The plugin reads `API_SERVER_KEY` through the secret scope and sends it to
+   the server per session — no extra configuration per project. `scenemux_doctor`
+   reports whether the API server is configured and reachable.
+4. **Check** — `scenemux_doctor` tells you exactly what's missing, if anything.
 
 ## Make a video
 
@@ -68,6 +81,9 @@ deliver the MP4 (and 9:16 on request).
   check the launch log.
 - `HTTP 401/403` from a studio call → a key is missing/invalid; doctor lists
   which one.
+- `director_backend=hermes` fails → the Hermes API server is not up: doctor
+  reports `hermes_director.reachable`. Fix: `API_SERVER_ENABLED=true` +
+  `API_SERVER_KEY` in `~/.hermes/.env`, then `hermes gateway`.
 - Home Agent port (e.g. `:8777`) ≠ Comfy port (`:8188`).
 - The server itself reads its own `.env` when run manually (docker compose
   auto-loads the repo `.env`); the *plugin* always supplies credentials via

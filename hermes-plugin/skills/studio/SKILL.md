@@ -45,6 +45,12 @@ assemble.
   `OPENCODE_API_KEY` — **or nothing, if Ollama runs locally** (the plugin
   auto-detects `127.0.0.1:11434` and points the server at it; free + private).
   Local mode: needs a GPU host with ComfyUI models and a local LLM.
+- `director_backend=hermes` — this local Hermes agent itself directs the
+  storyboard (server calls back into the agent's API server on port 8642).
+  Needs `API_SERVER_ENABLED=true` + `API_SERVER_KEY` in `~/.hermes/.env` and
+  the gateway running; `scenemux_doctor` reports `hermes_director` status.
+  Free (no LLM credits), but the plan call takes minutes — don't hold the
+  user's chat idle; `scenemux_plan` already has the 900s timeout.
 - Long tools: `scenemux_plan` can run 5-15 min (LLM + stills), `scenemux_project`
   1-3 min, renders take the time in the estimate. If a plan call times out,
   call `scenemux_status` — the plan often finished server-side.

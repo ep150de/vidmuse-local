@@ -193,7 +193,13 @@ def _provision_server_env(root: Path) -> list:
         lines.append(f"{name}={value}")
 
     written = []
-    for name in ("COMFY_CLOUD_API_KEY", "OLLAMA_API_KEY", "OPENCODE_API_KEY", "FAL_KEY"):
+    for name in (
+        "COMFY_CLOUD_API_KEY",
+        "OLLAMA_API_KEY",
+        "OPENCODE_API_KEY",
+        "FAL_KEY",
+        "HOME_AGENT_PASSWORD",
+    ):
         value = _secret(name)
         if value:
             upsert(name, value)
@@ -209,6 +215,15 @@ def _provision_server_env(root: Path) -> list:
             upsert("OLLAMA_MODEL", model)
         written.append("LLM_PROVIDER=ollama (local)")
 
+    # Hermes-director lane: let the server's env fallback (HERMES_URL /
+    # HERMES_TOKEN, read by server.llm.hermes_backend) find this machine's
+    # Hermes API server, so even sessions configured outside the plugin work.
+    hermes_key = _secret("API_SERVER_KEY")
+    if hermes_key:
+        upsert("HERMES_URL", "http://host.docker.internal:8642")
+        upsert("HERMES_TOKEN", hermes_key)
+        written.append("HERMES_URL+HERMES_TOKEN (hermes director lane)")
+
     try:
         env_path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
     except Exception:
@@ -222,6 +237,54 @@ def _server_alive(base: str) -> bool:
         return True
     except SceneMuxError:
         return False
+
+
+def _http_reachable(url: str, timeout: float = 4.0) -> bool:
+    """True if any HTTP response comes back (even 4xx) from url within timeout."""
+    import urllib.error
+    import urllib.request
+
+    if not url.startswith(("http://", "https://")):
+        return False
+    try:
+        urllib.request.urlopen(url, timeout=timeout)
+        return True
+    except urllib.error.HTTPError:
+        return True  # a response means the host is up
+    except Exception:
+        return False
+
+
+def _loopback_base(base: str) -> bool:
+    """True when a SceneMux base URL points at this machine."""
+    import urllib.parse
+
+    try:
+        host = (urllib.parse.urlparse(base).hostname or "").lower()
+    except Exception:
+        return False
+    return host in ("127.0.0.1", "localhost", "::1", "")
+
+
+def _hermes_urls(ctx, explicit: str = "") -> tuple:
+    """Resolve (server_url, probe_url) for the hermes-director lane.
+
+    ``server_url`` is what the SceneMux server uses to reach this machine's
+    Hermes API server (it usually runs in a Docker container, so
+    ``host.docker.internal`` reaches the host; the API server binds to
+    127.0.0.1 on the host). ``probe_url`` is what the plugin itself probes
+    from the host, where ``127.0.0.1`` is the right form. An explicit value
+    (tool arg or plugin setting) is used as-is for both.
+    """
+    explicit = str(explicit or "").strip().rstrip("/")
+    if explicit:
+        return explicit, explicit
+    cfg = str(ctx.get_config("hermes_url", default="") or "").strip().rstrip("/")
+    if cfg:
+        return cfg, cfg
+    if _loopback_base(_base_url(ctx)):
+        return "http://host.docker.internal:8642", "http://127.0.0.1:8642"
+    return "", "http://127.0.0.1:8642"
 
 
 def _start_server(ctx, mode: str, base: str) -> Dict[str, Any]:
@@ -358,6 +421,32 @@ def make_doctor(ctx) -> Callable[..., str]:
             if not ffmpeg:
                 report["hints"].append(
                     "ffmpeg not found on PATH (only needed for non-Docker server runs; Docker mode bundles it)."
+                )
+
+            # Hermes-director lane (director_backend=hermes): is the local
+            # Hermes API server configured and answering?
+            hermes_key = _secret("API_SERVER_KEY")
+            _, hermes_probe = _hermes_urls(ctx, "")
+            hermes_up = bool(hermes_key) and _http_reachable(
+                hermes_probe + "/health", timeout=3.0
+            )
+            report["hermes_director"] = {
+                "key_configured": bool(hermes_key),
+                "api_server_url": hermes_probe,
+                "reachable": hermes_up,
+            }
+            if not hermes_key:
+                report["hints"].append(
+                    "Hermes-director lane not configured: add API_SERVER_ENABLED=true "
+                    "and API_SERVER_KEY=<key> to ~/.hermes/.env and run the Hermes "
+                    "gateway (hermes gateway) to use director_backend=hermes."
+                )
+            elif not hermes_up:
+                report["hints"].append(
+                    "Hermes API server not reachable at " + hermes_probe +
+                    " — check API_SERVER_ENABLED=true in ~/.hermes/.env and that the "
+                    "gateway is running (hermes gateway). Only needed for "
+                    "director_backend=hermes."
                 )
 
             report["ok"] = bool(report["server"].get("reachable")) and not keys["missing"]
@@ -522,6 +611,34 @@ def make_project(ctx) -> Callable[..., str]:
             if not direction:
                 return json.dumps({"error": "direction is required — 1-3 sentences of creative direction."})
 
+            # Pipeline lanes declared in the tool schema — resolve them BEFORE
+            # touching the server so a misconfigured lane never leaks a session.
+            video_backend = str(args.get("video_backend") or "").strip()
+            stills_backend = str(args.get("stills_backend") or "").strip()
+            director_backend = str(args.get("director_backend") or "").strip().lower()
+            hermes_server_url = ""
+            hermes_key = ""
+            if director_backend == "hermes":
+                hermes_key = _secret("API_SERVER_KEY")
+                if not hermes_key:
+                    return json.dumps({
+                        "error": "director_backend=hermes needs the local Hermes API server key.",
+                        "fix": "Add API_SERVER_ENABLED=true and API_SERVER_KEY=<key> to ~/.hermes/.env "
+                               "(the key the Hermes gateway's API server authenticates with), make sure "
+                               "the gateway is running (hermes gateway), then re-run scenemux_project.",
+                    })
+                hermes_server_url, hermes_probe_url = _hermes_urls(ctx, str(args.get("hermes_url") or ""))
+                if args.get("hermes_url"):
+                    ctx.set_config("hermes_url", hermes_server_url)
+                if not _http_reachable(hermes_probe_url + "/health", timeout=4.0):
+                    return json.dumps({
+                        "error": "The Hermes API server is not reachable at " + hermes_probe_url +
+                                 " (needed for director_backend=hermes).",
+                        "fix": "Check that API_SERVER_ENABLED=true and API_SERVER_KEY are set in "
+                               "~/.hermes/.env and the gateway is running (`hermes gateway`; it listens "
+                               "on port 8642). Re-run scenemux_doctor to verify.",
+                    })
+
             sid = str(args.get("session_id") or "")
             resumed = bool(sid)
             if not sid:
@@ -537,9 +654,32 @@ def make_project(ctx) -> Callable[..., str]:
             video_model = str(args.get("video_model") or "").strip()
             if video_model:
                 cfg["video_model"] = video_model
+            # Explicit lanes override the preset (server normalizes + applies the preset)
+            if video_backend:
+                cfg["pipeline_video"] = video_backend
+            if stills_backend:
+                cfg["pipeline_stills"] = stills_backend
+            if director_backend:
+                cfg["pipeline_director"] = director_backend
+            comfy_url = str(
+                args.get("comfy_url") or ctx.get_config("comfy_url", default="") or ""
+            ).strip()
+            if comfy_url:
+                cfg["comfy_url"] = comfy_url
+            home_agent_url = str(
+                args.get("home_agent_url") or ctx.get_config("home_agent_url", default="") or ""
+            ).strip()
+            if home_agent_url:
+                cfg["home_agent_url"] = home_agent_url
+                home_agent_password = _secret("HOME_AGENT_PASSWORD")
+                if home_agent_password:
+                    cfg["home_agent_password"] = home_agent_password
+            if director_backend == "hermes":
+                cfg["hermes_url"] = hermes_server_url
+                cfg["hermes_token"] = hermes_key
             cfg["creative_direction"] = direction
             try:
-                _call(ctx, args, "/api/session/config", cfg, timeout=client.READ_TIMEOUT)
+                cfg_res = _call(ctx, args, "/api/session/config", cfg, timeout=client.READ_TIMEOUT)
             except SceneMuxError as e:
                 return json.dumps({"error": str(e), "session_id": sid, "stage": "pipeline config"})
 
@@ -569,11 +709,18 @@ def make_project(ctx) -> Callable[..., str]:
 
             up = up if isinstance(up, dict) else {}
             analysis = up.get("analysis") if isinstance(up.get("analysis"), dict) else {}
+            cfg_res = cfg_res if isinstance(cfg_res, dict) else {}
+            lanes = {
+                "director": cfg_res.get("pipeline_director") or "server-default",
+                "stills": cfg_res.get("pipeline_stills") or "server-default",
+                "video": cfg_res.get("pipeline_video") or "server-default",
+            }
             _remember_session(sid, {
                 "direction": direction,
                 "preset": preset or "server-default",
                 "audio": str(audio),
                 "track_title": analysis.get("track_title") or up.get("track_title"),
+                "lanes": lanes,
             })
             return json.dumps({
                 "session_id": sid,
@@ -585,6 +732,7 @@ def make_project(ctx) -> Callable[..., str]:
                 "lyrics_preview": (analysis.get("lyrics_preview") or "")[:300] or None,
                 "references_uploaded": refs_uploaded,
                 "preset": preset or "server-default",
+                "pipeline": lanes,
                 "next": "scenemux_plan with this session_id to build the storyboard; show the scene list to the user BEFORE any render.",
             })
         except Exception as e:  # noqa: BLE001

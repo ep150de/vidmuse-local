@@ -5,9 +5,11 @@ DOCTOR = {
     "name": "scenemux_doctor",
     "description": (
         "Health-check the SceneMux music-video studio: is the server reachable, "
-        "what is the LLM status, which required API keys are present, and is "
-        "ffmpeg available. Call this FIRST when the user wants to make a music "
-        "video from an MP3, and again whenever other scenemux_* tools report the "
+        "what is the LLM status, which API keys are present, which render "
+        "backends are usable (Comfy Cloud key, a reachable standalone "
+        "ComfyUI, a reachable AI Playground Home Agent), and is ffmpeg "
+        "available. Call this FIRST when the user wants to make a music video "
+        "from an MP3, and again whenever other scenemux_* tools report the "
         "server as unreachable. Read-only and free — it never starts processes "
         "and never spends anything. Returns a JSON report with actionable hints."
     ),
@@ -61,11 +63,12 @@ PROJECT = {
     "description": (
         "Create a SceneMux music-video project and upload its assets: makes a "
         "new server session (or resumes one via session_id), applies the "
-        "pipeline preset, and uploads the song (the server analyzes the beat "
-        "grid and transcribes lyrics locally) plus optional reference images "
-        "for character/art direction. Relatively free: local audio analysis + "
-        "local transcription only. MUST run before scenemux_plan. Returns the "
-        "session_id, track title, duration, and lyrics source."
+        "pipeline/backend selection, and uploads the song (the server analyzes "
+        "the beat grid and transcribes lyrics locally) plus optional reference "
+        "images for character/art direction. Relatively free: local audio "
+        "analysis + local transcription only. MUST run before scenemux_plan. "
+        "Returns the session_id, resolved pipeline lanes, track title, "
+        "duration, and lyrics source."
     ),
     "parameters": {
         "type": "object",
@@ -85,7 +88,34 @@ PROJECT = {
             "pipeline_preset": {
                 "type": "string",
                 "enum": ["cloud", "playground", "playground_agent", "hybrid", "hybrid_fast", "fast_draft"],
-                "description": "Pipeline preset. 'cloud' (default) = cloud LLM + Comfy Cloud video on any machine. The others need local/Playground infrastructure (ComfyUI on a GPU host or the Home Agent).",
+                "description": "Optional pipeline preset. 'cloud' = cloud LLM + Comfy Cloud video on any machine. The others need local/Playground infrastructure. Explicit backend parameters below override the preset's lanes.",
+            },
+            "video_backend": {
+                "type": "string",
+                "enum": ["comfy_cloud", "comfy_local", "home_agent", "fal"],
+                "description": "Video generation backend (overrides the preset). comfy_cloud = Comfy Cloud API (needs COMFY_CLOUD_API_KEY); comfy_local = a standalone ComfyUI instance you control (pass comfy_url, e.g. http://192.168.1.50:8188); home_agent = AI Playground Home Agent (pass home_agent_url; password comes from the HOME_AGENT_PASSWORD secret); fal = FAL.ai (needs FAL_KEY).",
+            },
+            "stills_backend": {
+                "type": "string",
+                "enum": ["comfy", "home_agent", "fal"],
+                "description": "Optional: storyboard still preview backend. Default follows the preset (usually 'comfy', which reuses the comfy_url or Comfy Cloud).",
+            },
+            "director_backend": {
+                "type": "string",
+                "enum": ["cloud_llm", "home_agent", "hermes"],
+                "description": "Optional: who directs the storyboard. cloud_llm = Ollama/OpenCode LLM (local Ollama is auto-detected, free); home_agent = the AI Playground Home Agent; hermes = this local Hermes agent itself (needs the Hermes API server: API_SERVER_ENABLED + API_SERVER_KEY in ~/.hermes/.env and the gateway running; the key is picked up automatically from Hermes secret storage).",
+            },
+            "comfy_url": {
+                "type": "string",
+                "description": "Standalone ComfyUI base URL for video_backend=comfy_local (e.g. http://192.168.1.50:8188). Defaults to the plugin's comfy_url setting, then the server's http://127.0.0.1:8188.",
+            },
+            "home_agent_url": {
+                "type": "string",
+                "description": "AI Playground Home Agent base URL for video_backend/stills_backend/director_backend=home_agent (e.g. http://192.168.1.40:8777). Defaults to the plugin's home_agent_url setting.",
+            },
+            "hermes_url": {
+                "type": "string",
+                "description": "Optional: base URL of the Hermes API server for director_backend=hermes. Default: auto — http://host.docker.internal:8642 when the SceneMux server runs in Docker on this machine (the Hermes API server on this host), http://127.0.0.1:8642 for a native server.",
             },
             "video_model": {
                 "type": "string",
