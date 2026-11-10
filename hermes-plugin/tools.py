@@ -269,12 +269,14 @@ def _loopback_base(base: str) -> bool:
 def _hermes_urls(ctx, explicit: str = "") -> tuple:
     """Resolve (server_url, probe_url) for the hermes-director lane.
 
-    ``server_url`` is what the SceneMux server uses to reach this machine's
-    Hermes API server (it usually runs in a Docker container, so
-    ``host.docker.internal`` reaches the host; the API server binds to
-    127.0.0.1 on the host). ``probe_url`` is what the plugin itself probes
-    from the host, where ``127.0.0.1`` is the right form. An explicit value
-    (tool arg or plugin setting) is used as-is for both.
+    ``probe_url`` is what the plugin probes from the host: the Hermes API
+    server runs on this machine, so ``127.0.0.1:8642`` is always the right
+    form. ``server_url`` is what the SceneMux server uses to reach the API
+    server. An explicit value (tool arg or plugin setting) is used as-is.
+    Otherwise: when the SceneMux server is expected to run in Docker on this
+    machine (loopback base), ``host.docker.internal:8642`` reaches the host;
+    for a remote base, leave it empty so the server falls back to its own
+    HERMES_URL env / default.
     """
     explicit = str(explicit or "").strip().rstrip("/")
     if explicit:
@@ -675,7 +677,10 @@ def make_project(ctx) -> Callable[..., str]:
                 if home_agent_password:
                     cfg["home_agent_password"] = home_agent_password
             if director_backend == "hermes":
-                cfg["hermes_url"] = hermes_server_url
+                if hermes_server_url:
+                    cfg["hermes_url"] = hermes_server_url
+                # Always send the token per session; the server also falls
+                # back to its HERMES_TOKEN env for URL resolution.
                 cfg["hermes_token"] = hermes_key
             cfg["creative_direction"] = direction
             try:

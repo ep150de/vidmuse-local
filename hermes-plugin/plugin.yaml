@@ -1,5 +1,5 @@
 name: scenemux
-version: "0.4.0"
+version: "0.4.1"
 description: "SceneMux music-video studio for Hermes: turn an MP3 into a beat-aligned, lip-synced music video — plan the storyboard (cloud LLM, Home Agent, or this Hermes agent itself as director), render scenes on Comfy Cloud, a standalone ComfyUI, or the AI Playground Home Agent, and get back a muxed MP4."
 author: ep150de
 manifest_version: 2

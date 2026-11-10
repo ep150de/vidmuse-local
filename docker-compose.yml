@@ -9,6 +9,11 @@ services:
     container_name: vidmuse-server
     ports:
       - "8000:8000"
+    # host.docker.internal resolves on Docker Desktop (macOS/Windows) by
+    # default; host-gateway makes it work on Linux too. Needed for the
+    # hermes-director lane (HERMES_URL) and the Ollama/Comfy host fallbacks.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./server:/app
       - ./outputs:/app/outputs
