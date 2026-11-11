@@ -9,6 +9,7 @@ import json
 import urllib.error
 import urllib.request
 import uuid
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
