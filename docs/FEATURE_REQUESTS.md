@@ -1,16 +1,16 @@
 # Feature requests / backlog
 
-Tracked ideas for upcoming work (not implemented yet).
+Tracked ideas for upcoming work.
 
-## Setup wizard
+## Done recently
 
-- [ ] **Numbered Ollama Cloud model menu** during Chromebook / cloud setup instead of free-text default (`gpt-oss:120b`). Suggested picks:
-  - `gpt-oss:120b` / `gpt-oss:20b`
-  - `glm-5.2`
-  - `qwen3.5` (or a specific tag such as `qwen3.5:397b`)
-  - `deepseek-v4-flash` / `deepseek-v4-pro`
-  - `minimax-m3`
-  - `kimi-k2.6` / `kimi-k2.7-code`
-  - `gemma4:31b`
-  - Custom… (free text)
-- [ ] Optionally refresh the list from `https://ollama.com/api/tags` when an API key is present
+- [x] Numbered Ollama Cloud model menu in setup wizard (curated list + optional live `ollama.com/api/tags`)
+- [x] In-app project resume, queue cancel, credits strip, media bin, prompt enhance, per-scene engine
+- [x] Packaging sources refreshed (Windows NSIS / Linux plan) — binaries wait for stable release
+
+## Still open (post-stable / polish)
+
+- [ ] Public GitHub Release with Windows `scenemux-setup.exe` (+ Linux package)
+- [ ] Rename local checkout folder `vidmuse-local` → `scenemux` when safe for the working tree
+- [ ] Optional: refresh OpenCode model menu the same way as Ollama Cloud
+- [ ] Broader automated e2e (playwright) against a mock Comfy / FAL stub

@@ -143,7 +143,8 @@ export function StudioApp({ serverHealth }: Props) {
   const [trackTitle, setTrackTitle] = useState("");
   const [duration, setDuration] = useState(0);
   const [comfyUrl, setComfyUrl] = useState(
-    () => localStorage.getItem("scenemux-comfy-url") || "http://192.168.4.34:8188"
+    () =>
+      localStorage.getItem("scenemux-comfy-url") || "http://localhost:8188"
   );
   const [theme, setTheme] = useState<ThemeId>(() => getStoredTheme());
   const [uiMode, setUiMode] = useState<"simple" | "advanced">(() =>
@@ -161,7 +162,7 @@ export function StudioApp({ serverHealth }: Props) {
     useState<PipelineVideo>("comfy_cloud");
   const [videoModel, setVideoModel] = useState<VideoModel>("minimax-h3");
   const [homeAgentUrl, setHomeAgentUrl] = useState(
-    () => localStorage.getItem("scenemux-ha-url") || "http://192.168.4.34:8777"
+    () => localStorage.getItem("scenemux-ha-url") || "http://localhost:8777"
   );
   const [homeAgentPassword, setHomeAgentPassword] = useState("");
   const [hermesUrl, setHermesUrl] = useState(
@@ -1084,13 +1085,35 @@ export function StudioApp({ serverHealth }: Props) {
     if (!plan?.scenes?.length) return;
     if (
       !window.confirm(
-        `Resume remaining scenes?\n\nAbout ${remainingCount} H3 job(s) left. Ready clips will be kept.`
+        `Resume remaining scenes?\n\nAbout ${remainingCount} job(s) left. Ready clips will be kept.`
       )
     ) {
       return;
     }
     await startFullRender();
   }, [plan, remainingCount, startFullRender]);
+
+  const handleRetryFailed = useCallback(async () => {
+    if (!plan?.scenes?.length || failedCount === 0) return;
+    if (
+      !window.confirm(
+        `Retry ${failedCount} failed scene(s)?\n\nReady clips stay. Failed scenes are re-queued for another video job.`
+      )
+    ) {
+      return;
+    }
+    // Clear failed markers client-side so the queue UI shows them as queued again
+    setPlan({
+      ...plan,
+      scenes: plan.scenes.map((s) =>
+        s.status === "failed"
+          ? { ...s, status: "queued", error: undefined, video_url: null }
+          : s
+      ),
+    });
+    setRenderFailed(false);
+    await startFullRender();
+  }, [failedCount, plan, startFullRender]);
 
   const handlePreviewScene = useCallback(async () => {
     if (selectedIndex == null || !selectedScene) {
@@ -1486,6 +1509,17 @@ export function StudioApp({ serverHealth }: Props) {
                         ? `Render remaining (${remainingCount})`
                         : "Render full video"}
                     </button>
+                    {failedCount > 0 && (
+                      <button
+                        type="button"
+                        className="studio-btn studio-btn-soft"
+                        disabled={locked}
+                        onClick={handleRetryFailed}
+                      >
+                        <RefreshCw className="w-4 h-4" aria-hidden="true" />
+                        Retry failed ({failedCount})
+                      </button>
+                    )}
                   </>
                 )}
                 {phase === "done" && (
@@ -1769,7 +1803,7 @@ export function StudioApp({ serverHealth }: Props) {
                         localStorage.setItem("scenemux-comfy-url", e.target.value);
                       }}
                       aria-label="Comfy URL"
-                      placeholder="http://192.168.4.34:8188"
+                      placeholder="http://localhost:8188"
                     />
                   )}
 
@@ -1780,7 +1814,7 @@ export function StudioApp({ serverHealth }: Props) {
                         value={homeAgentUrl}
                         onChange={(e) => setHomeAgentUrl(e.target.value)}
                         aria-label="Home Agent URL"
-                        placeholder="http://192.168.4.34:8777"
+                        placeholder="http://localhost:8777"
                       />
                       <input
                         className="studio-field"
@@ -1887,7 +1921,7 @@ export function StudioApp({ serverHealth }: Props) {
                     value={homeAgentUrl}
                     onChange={(e) => setHomeAgentUrl(e.target.value)}
                     aria-label="Home Agent URL"
-                    placeholder="http://192.168.4.34:8777"
+                    placeholder="http://localhost:8777"
                   />
                   <input
                     className="studio-field"
@@ -1909,7 +1943,7 @@ export function StudioApp({ serverHealth }: Props) {
                     localStorage.setItem("scenemux-comfy-url", e.target.value);
                   }}
                   aria-label="Comfy URL"
-                  placeholder="http://192.168.4.34:8188"
+                  placeholder="http://localhost:8188"
                 />
               )}
               {haStatus && <p className="ha-status">{haStatus}</p>}
@@ -1995,23 +2029,42 @@ export function StudioApp({ serverHealth }: Props) {
                 </div>
               )}
 
-            {renderFailed && phase === "review" && remainingCount > 0 && (
+            {phase === "review" &&
+              (renderFailed || failedCount > 0) &&
+              remainingCount > 0 && (
               <div className="resume-banner" role="status">
                 <div>
-                  <p className="resume-title">Full render interrupted</p>
+                  <p className="resume-title">
+                    {failedCount > 0
+                      ? "Some scenes failed"
+                      : "Full render interrupted"}
+                  </p>
                   <p className="resume-copy">
-                    {readyCount} scene(s) ready · {remainingCount} left · failed
-                    clips stay skipped until you retry.
+                    {readyCount} ready · {remainingCount} left
+                    {failedCount > 0 ? ` · ${failedCount} failed` : ""}
+                    . Ready clips are kept.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  className="studio-btn studio-btn-primary"
-                  disabled={locked}
-                  onClick={handleResumeRemaining}
-                >
-                  Resume remaining ({remainingCount})
-                </button>
+                <div className="scene-tools">
+                  {failedCount > 0 && (
+                    <button
+                      type="button"
+                      className="studio-btn studio-btn-soft"
+                      disabled={locked}
+                      onClick={handleRetryFailed}
+                    >
+                      Retry failed ({failedCount})
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="studio-btn studio-btn-primary"
+                    disabled={locked}
+                    onClick={handleResumeRemaining}
+                  >
+                    Resume remaining ({remainingCount})
+                  </button>
+                </div>
               </div>
             )}
 

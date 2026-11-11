@@ -119,10 +119,14 @@ See [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md) and [docs/HOME_AGENT.md](docs/H
 ### Standalone server
 
 ```bash
-cd server
-pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8000
+# from repo root (preferred)
+./dev.sh
+# or:
+PYTHONPATH=. server/.venv/bin/python -m uvicorn server.main:app --host 0.0.0.0 --port 8000
 ```
+
+After `cd client && npm run build`, the API also serves the studio UI from
+`client/dist` on the same port (packaged / production-style). Dev still uses Vite.
 
 ## Environment reference
 

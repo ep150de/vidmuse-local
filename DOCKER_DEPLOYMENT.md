@@ -1,6 +1,6 @@
 # Docker Deployment — SceneMux
 
-Formerly VidMuse Local. Prefer the root [README](README.md) for current studio / engine setup.
+Formerly SceneMux. Prefer the root [README](README.md) for current studio / engine setup.
 
 ## Prerequisites
 
@@ -51,7 +51,7 @@ docker compose up -d
 
 This starts:
 - ComfyUI on http://localhost:8188
-- VidMuse server on http://localhost:8000 (with llama.cpp)
+- SceneMux server on http://localhost:8000 (with llama.cpp)
 
 5. **Start client**
 ```bash
@@ -65,7 +65,7 @@ VITE_SERVER_URL=http://localhost:8000 npm run dev
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| server | 8000 | VidMuse FastAPI + llama.cpp |
+| server | 8000 | SceneMux FastAPI + llama.cpp |
 | comfyui | 8188 | Image/Video generation |
 | client | 5173 | React UI (dev only) |
 
@@ -141,7 +141,7 @@ This model generates images in 4-6 steps (vs. 30+ for standard FLUX).
 
 ## Intel XPU ComfyUI Support
 
-VidMuse Local supports Intel XPU (Arc GPU) via the Intel AI-Playground ComfyUI build.
+SceneMux supports Intel XPU (Arc GPU) via the Intel AI-Playground ComfyUI build.
 
 ### Prerequisites
 
@@ -249,7 +249,7 @@ docker run -d --gpus all -p 8188:8188 \
   -v outputs:/root/comfyui/outputs \
   comfyanonymous/comfyui
 
-# VidMuse server
+# SceneMux server
 docker run -d --gpus all -p 8000:8000 \
   -v $(pwd)/server:/app \
   -v $(pwd)/outputs:/app/outputs \

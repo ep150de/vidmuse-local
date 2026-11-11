@@ -36,3 +36,6 @@ scripts.
 3. Build server binary + NSIS (`build-windows.bat`) or Linux package (TBD).
 4. Smoke-test install on a clean machine (cloud mode at minimum).
 5. Attach artifacts to the GitHub Release; update README download links.
+
+When `client/dist` exists, the FastAPI app also serves the studio UI from `/`
+(same port as the API) for packaged / production-style runs.

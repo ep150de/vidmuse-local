@@ -101,14 +101,15 @@ def resolve_scene_engine(
     ``override`` may be a concrete engine (minimax-h3 / fasth3 / ltx23) set
     per-scene in the studio Advanced tools.
     """
-    if override:
+    raw_ov = str(override or "").strip().lower()
+    if raw_ov in ("", "auto", "default", "none"):
+        engine = None
+    else:
         ov = normalize_video_model(override)
         if ov in ("minimax-h3", "fasth3", "ltx23"):
             engine = ov
         else:
             engine = None
-    else:
-        engine = None
 
     if engine is None:
         vm = normalize_video_model(video_model)

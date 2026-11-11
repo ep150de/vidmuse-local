@@ -2614,6 +2614,22 @@ async def download_vertical(session_id: str):
     )
 
 
+# ─── STATIC STUDIO UI (optional packaged / production build) ────────────
+# When client/dist exists (npm run build), serve it so one process can host
+# API + UI. Dev still uses Vite on :5173. Mounted last so /api/* wins.
+
+_CLIENT_DIST = Path(__file__).resolve().parents[1] / "client" / "dist"
+if _CLIENT_DIST.is_dir() and (_CLIENT_DIST / "index.html").is_file():
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount(
+        "/",
+        StaticFiles(directory=str(_CLIENT_DIST), html=True),
+        name="studio_ui",
+    )
+    LOG.info("Serving studio UI from %s", _CLIENT_DIST)
+
+
 # ─── MAIN ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

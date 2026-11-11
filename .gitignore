@@ -45,6 +45,9 @@ server/build/
 server/build-venv/
 *.spec.bak
 client/dist/
+.pytest_cache/
+__pycache__/
+*.egg-info/
 
 # Local scratch / probe scripts (never commit)
 .scratch_*.py
