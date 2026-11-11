@@ -7,6 +7,9 @@ __pycache__/
 venv/
 .venv/
 env/
+server-venv/
+plugin-data-test/
+outputs/
 
 # Node
 node_modules/
@@ -123,3 +126,7 @@ SKILL-bfl-music-video.md
 inscribed*.json
 inscribed.mp3
 music-video-skill/
+
+# The `_*.py` scratch rule above also matches the plugin's Python entrypoint,
+# which the catalog loader must be able to import. Re-include it.
+!hermes-plugin/__init__.py

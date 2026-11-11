@@ -1,0 +1,70 @@
+name: scenemux
+version: "0.4.2"
+description: "SceneMux music-video studio for Hermes: turn an MP3 into a beat-aligned, lip-synced music video — plan the storyboard (cloud LLM, Home Agent, or this Hermes agent itself as director), render scenes on Comfy Cloud, a standalone ComfyUI, or the AI Playground Home Agent, and get back a muxed MP4."
+author: ep150de
+manifest_version: 2
+api_version: 1
+license: MIT
+homepage: https://github.com/ep150de/scenemux
+tags: [music-video, comfyui, media, studio, ffmpeg]
+requires_hermes: ">=0.23.0"
+provides_tools:
+  - scenemux_doctor
+  - scenemux_setup
+  - scenemux_project
+  - scenemux_plan
+  - scenemux_render
+  - scenemux_status
+  - scenemux_export
+  - scenemux_cancel
+provides_hooks: []
+requires_env:
+  - name: COMFY_CLOUD_API_KEY
+    description: "Comfy Cloud API key (cloud-mode video renderer; Standard+ plan)"
+    url: "https://platform.comfy.org/profile/api-keys"
+    secret: true
+  - name: OLLAMA_API_KEY
+    description: "Ollama Cloud API key (cloud-mode LLM/director). Not needed if Ollama runs locally — the plugin detects it and points the server at it."
+    url: "https://ollama.com/settings/keys"
+    secret: true
+  - name: OPENCODE_API_KEY
+    description: "OpenCode Go API key (optional LLM fallback)"
+    url: "https://opencode.ai/"
+    secret: true
+  - name: FAL_KEY
+    description: "FAL.ai API key (optional; draft stills/clips only, prepaid credits)"
+    url: "https://fal.ai/dashboard/keys"
+    secret: true
+  - name: HOME_AGENT_PASSWORD
+    description: "AI Playground Home Agent password (only needed when using the home_agent backend; sent to the server's session config or its env)"
+    url: "https://aiplayground.com"
+    secret: true
+  - name: API_SERVER_KEY
+    description: "Hermes API server bearer key — the same key the local Hermes gateway's API server uses (set alongside API_SERVER_ENABLED=true in ~/.hermes/.env). Only needed when using director_backend=hermes."
+    url: "https://hermes-agent.nousresearch.com/docs/user-guide/features/api-server"
+    secret: true
+config_schema:
+  base_url:
+    type: str
+    default: "http://127.0.0.1:8000"
+    description: "SceneMux server base URL"
+  mode:
+    type: str
+    default: "cloud"
+    description: "Runtime mode: cloud (any machine, Comfy Cloud + cloud LLM) or local (GPU host with ComfyUI)"
+  comfy_url:
+    type: str
+    default: ""
+    description: "Standalone ComfyUI base URL for video_backend=comfy_local (e.g. http://192.168.1.50:8188); empty = server default http://127.0.0.1:8188"
+  home_agent_url:
+    type: str
+    default: ""
+    description: "AI Playground Home Agent base URL for the home_agent backend (e.g. http://192.168.1.40:8777)"
+  hermes_url:
+    type: str
+    default: ""
+    description: "Hermes API server base URL for director_backend=hermes (e.g. http://192.168.1.50:8642 on a different machine). Empty = auto: http://host.docker.internal:8642 when the SceneMux server runs in Docker on this machine, else the server's own HERMES_URL env fallback."
+  repo_path:
+    type: str
+    default: ""
+    description: "Path to a full SceneMux repo clone (the dir with docker-compose.yml + server/). Needed when the plugin was installed from the catalog (it is copied into ~/.hermes/plugins/ with no server code beside it) so scenemux_setup can launch the server. Empty = the plugin's parent dir (works when installed straight from the repo)."

@@ -11,6 +11,8 @@ librosa==0.10.1
 numpy==1.24.3
 soundfile>=0.12.1,<0.13
 scipy>=1.11.0,<1.16
+# Local Whisper lyrics (auto-transcription fallback when no pasted lyrics)
+faster-whisper>=1.0.0,<2.0
 
 # Image processing
 pillow==10.1.0
