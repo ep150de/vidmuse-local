@@ -1,5 +1,5 @@
 name: scenemux
-version: "0.4.1"
+version: "0.4.2"
 description: "SceneMux music-video studio for Hermes: turn an MP3 into a beat-aligned, lip-synced music video — plan the storyboard (cloud LLM, Home Agent, or this Hermes agent itself as director), render scenes on Comfy Cloud, a standalone ComfyUI, or the AI Playground Home Agent, and get back a muxed MP4."
 author: ep150de
 manifest_version: 2
@@ -64,3 +64,7 @@ config_schema:
     type: str
     default: ""
     description: "Hermes API server base URL for director_backend=hermes (e.g. http://192.168.1.50:8642 on a different machine). Empty = auto: http://host.docker.internal:8642 when the SceneMux server runs in Docker on this machine, else the server's own HERMES_URL env fallback."
+  repo_path:
+    type: str
+    default: ""
+    description: "Path to a full SceneMux repo clone (the dir with docker-compose.yml + server/). Needed when the plugin was installed from the catalog (it is copied into ~/.hermes/plugins/ with no server code beside it) so scenemux_setup can launch the server. Empty = the plugin's parent dir (works when installed straight from the repo)."

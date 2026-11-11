@@ -76,8 +76,29 @@ def _key_report(mode: str) -> Dict[str, Any]:
 
 # ----------------------------------------------------------------- helpers
 
-def _repo_root() -> Path:
-    """SceneMux repo root — the plugin ships in <repo>/hermes-plugin."""
+def _repo_root(ctx=None) -> Path:
+    """SceneMux repo root — the compose files + ``server/`` the plugin
+    launches.
+
+    Prefer an explicit ``repo_path`` plugin setting (a full clone of the
+    SceneMux repo): a plugin installed from the catalog is copied into
+    ``~/.hermes/plugins/`` with no server code beside it, so it needs the
+    user's clone pointed at by hand. Otherwise fall back to the plugin's
+    parent dir (the layout when the plugin is installed from a full clone
+    / local repo, where it sits in ``<repo>/hermes-plugin``).
+    """
+    if ctx is not None:
+        try:
+            rp = str(ctx.get_config("repo_path", default="") or "").strip()
+        except Exception:
+            rp = ""
+        if rp:
+            try:
+                p = Path(rp).expanduser().resolve()
+                if (p / "docker-compose.yml").exists() or (p / "docker-compose.cloud.yml").exists():
+                    return p
+            except Exception:
+                pass
     return Path(__file__).resolve().parent.parent
 
 
@@ -291,15 +312,18 @@ def _hermes_urls(ctx, explicit: str = "") -> tuple:
 
 def _start_server(ctx, mode: str, base: str) -> Dict[str, Any]:
     """Launch the SceneMux server detached via Docker, then poll for health."""
-    root = _repo_root()
+    root = _repo_root(ctx)
     compose = root / COMPOSE_BY_MODE[mode]
     if not compose.exists():
         return {
             "started": False,
             "error": (
-                f"Compose file not found at {compose}. The plugin must be installed "
-                "from the SceneMux repo (hermes plugins install ep150de/scenemux or "
-                "a full clone) so the server code sits beside it."
+                f"Compose file not found at {compose}. Set the plugin's "
+                "``repo_path`` setting to a full SceneMux repo clone (one that "
+                "contains docker-compose.yml + server/), or install the plugin "
+                "from the repo (hermes plugins install ep150de/scenemux) so the "
+                "server code sits beside it, or start the server yourself and "
+                "point base_url at it."
             ),
         }
     docker = shutil.which("docker")
@@ -961,7 +985,7 @@ def make_export(ctx) -> Callable[..., str]:
 
             if bool(args.get("vertical", False)):
                 vert = _call(ctx, args, "/api/studio/export-vertical", {"session_id": sid}, timeout=900)
-                session_dir = _repo_root() / "outputs" / sid
+                session_dir = _repo_root(ctx) / "outputs" / sid
                 vfiles = []
                 if session_dir.is_dir():
                     vfiles = sorted(

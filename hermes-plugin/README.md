@@ -24,8 +24,15 @@ drafts) only produce per-scene picture.
 hermes plugins install scenemux
 
 # From the repo (development / before catalog listing)
-hermes plugins install ep150de/scenemux --subdir hermes-plugin
+hermes plugins install ep150de/scenemux/hermes-plugin
 ```
+
+The plugin installs as a standalone client (no server code is copied with
+it). For `scenemux_setup` to launch the studio server for you, set the
+plugin's **`repo_path`** setting to a full clone of
+[the repo](https://github.com/ep150de/scenemux) — the directory that
+contains `docker-compose.yml` + `server/` — or start the server yourself and
+point `base_url` at it (see Setup).
 
 ## Setup
 
@@ -36,10 +43,12 @@ hermes plugins install ep150de/scenemux --subdir hermes-plugin
    - Local mode (GPU host) needs no cloud keys, just ComfyUI models + a local LLM.
    Keys live in `~/.hermes/.env` (or the Desktop plugin settings). The plugin
    reads them only through Hermes' secret scope — never from files directly.
-2. **Server** — ask your agent: *"set up SceneMux in cloud mode."* It runs
+2. **Server** — Ask your agent: *"set up SceneMux in cloud mode."* It runs
    `scenemux_setup`, which launches the server via Docker (detached; log at
    `<HERMES_HOME>/plugin-data/scenemux/server-launch.log`) and waits for it
-   to become healthy. First run builds the image (a few minutes).
+   to become healthy. First run builds the image (a few minutes). `scenemux_setup`
+   finds the server code via the `repo_path` setting (point it at a full repo
+   clone) — or, if the server is already running, it just checks health.
 3. **Optional — make Hermes itself the director** — pass
    `director_backend=hermes` to `scenemux_project` and the storyboard is
    planned by *this* Hermes agent (its full toolset, not an external LLM
