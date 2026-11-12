@@ -162,7 +162,7 @@ export function StudioApp({ serverHealth }: Props) {
     useState<PipelineVideo>("comfy_cloud");
   const [videoModel, setVideoModel] = useState<VideoModel>("minimax-h3");
   const [homeAgentUrl, setHomeAgentUrl] = useState(
-    () => localStorage.getItem("scenemux-ha-url") || "http://localhost:8777"
+    () => localStorage.getItem("scenemux-ha-url") || "http://localhost:8765"
   );
   const [homeAgentPassword, setHomeAgentPassword] = useState("");
   const [hermesUrl, setHermesUrl] = useState(
@@ -346,20 +346,41 @@ export function StudioApp({ serverHealth }: Props) {
     applyTheme(next);
   }, []);
 
-  const handleDiagnoseHomeAgent = useCallback(async () => {
+  const handleDiagnoseLan = useCallback(async () => {
     setHaTesting(true);
     setHaStatus(null);
     setError(null);
     try {
       localStorage.setItem("scenemux-ha-url", homeAgentUrl.trim());
-      const res = await api.diagnoseHomeAgent(homeAgentUrl.trim());
-      if (res.tcp_ok) {
+      const res = await api.diagnoseHomeAgent(homeAgentUrl.trim(), {
+        password: homeAgentPassword,
+        probe_comfy: true,
+        comfy_url: comfyUrl.trim() || undefined,
+      });
+      const stepBits = (res.steps || [])
+        .map((s: { id: string; ok: boolean | null; detail?: string }) => {
+          const mark =
+            s.ok === true ? "✓" : s.ok === false ? "✗" : "·";
+          return `${mark}${s.id}`;
+        })
+        .join(" ");
+      const comfyBit = res.comfy
+        ? res.comfy.ok
+          ? " · Comfy ok"
+          : " · Comfy unreachable"
+        : "";
+      if (res.ok) {
         setHaStatus(
-          `TCP open to ${res.host}:${res.port} (${res.latency_ms ?? "?"} ms) — try Test with password`
+          `LAN ok ${res.host}:${res.port} (${res.latency_ms ?? "?"} ms) ${stepBits}${comfyBit}`
         );
+      } else if (res.tcp_ok) {
+        setHaStatus(
+          `Partial ${res.host}:${res.port} — ${stepBits}${comfyBit}`
+        );
+        setError(res.hint || res.error || "LAN diagnose incomplete");
       } else {
         setHaStatus(null);
-        setError(res.hint || res.error || "Home Agent port unreachable");
+        setError(res.hint || res.error || "Home Agent unreachable");
       }
     } catch (e) {
       setHaStatus(null);
@@ -367,26 +388,7 @@ export function StudioApp({ serverHealth }: Props) {
     } finally {
       setHaTesting(false);
     }
-  }, [homeAgentUrl]);
-
-  const handleTestHomeAgent = useCallback(async () => {
-    setHaTesting(true);
-    setHaStatus(null);
-    setError(null);
-    try {
-      localStorage.setItem("scenemux-ha-url", homeAgentUrl.trim());
-      const res = await api.testHomeAgent(
-        homeAgentUrl.trim(),
-        homeAgentPassword
-      );
-      setHaStatus(`Connected (${res.latency_ms ?? "?"} ms)`);
-    } catch (e) {
-      setHaStatus(null);
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setHaTesting(false);
-    }
-  }, [homeAgentPassword, homeAgentUrl]);
+  }, [comfyUrl, homeAgentPassword, homeAgentUrl]);
 
   useEffect(() => {
     if (!stillFile) {
@@ -1814,7 +1816,7 @@ export function StudioApp({ serverHealth }: Props) {
                         value={homeAgentUrl}
                         onChange={(e) => setHomeAgentUrl(e.target.value)}
                         aria-label="Home Agent URL"
-                        placeholder="http://localhost:8777"
+                        placeholder="http://localhost:8765"
                       />
                       <input
                         className="studio-field"
@@ -1822,26 +1824,17 @@ export function StudioApp({ serverHealth }: Props) {
                         value={homeAgentPassword}
                         onChange={(e) => setHomeAgentPassword(e.target.value)}
                         aria-label="Home Agent password"
-                        placeholder="LAN password"
+                        placeholder="Local web password"
                         autoComplete="off"
                       />
                       <button
                         type="button"
                         className="studio-btn studio-btn-ghost"
                         disabled={haTesting || !homeAgentUrl.trim()}
-                        onClick={handleDiagnoseHomeAgent}
+                        onClick={handleDiagnoseLan}
+                        title="TCP → HTTP → login → SSE → Comfy :8188"
                       >
-                        {haTesting ? "Checking…" : "Diagnose"}
-                      </button>
-                      <button
-                        type="button"
-                        className="studio-btn studio-btn-ghost"
-                        disabled={
-                          haTesting || !homeAgentUrl.trim() || !homeAgentPassword
-                        }
-                        onClick={handleTestHomeAgent}
-                      >
-                        {haTesting ? "Testing…" : "Test"}
+                        {haTesting ? "Diagnosing…" : "Diagnose LAN"}
                       </button>
                     </div>
                   )}
@@ -1921,7 +1914,7 @@ export function StudioApp({ serverHealth }: Props) {
                     value={homeAgentUrl}
                     onChange={(e) => setHomeAgentUrl(e.target.value)}
                     aria-label="Home Agent URL"
-                    placeholder="http://localhost:8777"
+                    placeholder="http://localhost:8765"
                   />
                   <input
                     className="studio-field"
@@ -1929,9 +1922,17 @@ export function StudioApp({ serverHealth }: Props) {
                     value={homeAgentPassword}
                     onChange={(e) => setHomeAgentPassword(e.target.value)}
                     aria-label="Home Agent password"
-                    placeholder="LAN password"
+                    placeholder="Local web password"
                     autoComplete="off"
                   />
+                  <button
+                    type="button"
+                    className="studio-btn studio-btn-ghost"
+                    disabled={haTesting || !homeAgentUrl.trim()}
+                    onClick={handleDiagnoseLan}
+                  >
+                    {haTesting ? "Diagnosing…" : "Diagnose LAN"}
+                  </button>
                 </div>
               )}
               {uiMode === "simple" && needsComfyUrl(lanes) && (

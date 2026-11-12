@@ -32,7 +32,11 @@ def build_job_envelope(
     prompt: str,
     extras: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """JSON fenced block the Playground agent can follow."""
+    """Natural-language ask for AI Playground's agentic Home Agent.
+
+    Prefer plain creative/media prompts (Playground tools decide image/LTX/H3).
+    A compact JSON hint is appended only when extras need structured fields.
+    """
     still_like = job_type in (
         "still",
         "storyboard_still",
@@ -40,40 +44,42 @@ def build_job_envelope(
         "image",
     )
     h3_like = job_type in ("h3_r2v", "h3_t2v", "video", "minimax_h3")
+    ltx_like = job_type in ("ltx23", "ltx", "i2v")
     if still_like:
-        instructions = (
-            "Generate ONE photorealistic image that matches the prompt. "
-            "Attach the finished image in your chat reply (image attachment). "
-            "Do not only describe the image — the image file is required. "
-            "Prefer a single wide music-video storyboard frame unless extras say otherwise."
+        body = (
+            "Generate one photorealistic music-video still for this brief. "
+            "Attach the finished image in your reply (required — not text-only). "
+            "Wide storyboard framing unless the brief says otherwise.\n\n"
+            f"{prompt}"
         )
     elif h3_like:
-        instructions = (
-            "Run MiniMax H3 (ref2v / lip-sync) on the Playground host using the "
-            "attached reference still + audio (or extras.audio_path_hint). "
-            "Return the finished MP4 as a chat video attachment or a direct "
-            "http(s) URL to the file. Do not only describe the clip."
+        body = (
+            "Animate / lip-sync this performance on the Playground host "
+            "(MiniMax H3 Ref2VA when available). Use any attached reference "
+            "still and audio. Return the finished MP4 as a video attachment "
+            "or a direct file URL — not a description only.\n\n"
+            f"{prompt}"
+        )
+    elif ltx_like:
+        body = (
+            "Animate this still with LTX image-to-video on the Playground host. "
+            "Return the finished MP4 as a chat video attachment.\n\n"
+            f"{prompt}"
         )
     else:
-        instructions = (
-            "Complete this SceneMux job on the Playground host. "
-            "Return a short text confirmation. If you generate media, "
-            "include it in the chat reply as an attachment when possible."
+        body = (
+            "Please complete this SceneMux request on the Playground host. "
+            "If you generate media, attach the file in your reply.\n\n"
+            f"{prompt}"
         )
-    payload: Dict[str, Any] = {
-        "scenemux_job": {
-            "type": job_type,
-            "prompt": prompt,
-            "instructions": instructions,
-        }
-    }
     if extras:
-        payload["scenemux_job"]["extras"] = extras
-    return (
-        "SceneMux agentic job — please execute:\n\n"
-        f"```json\n{json.dumps(payload, indent=2)}\n```\n\n"
-        f"Prompt:\n{prompt}\n"
-    )
+        # Light structured hint — agent can ignore keys it does not need
+        body += (
+            "\n\n(Context for tools — optional JSON)\n```json\n"
+            + json.dumps({"scenemux": {"type": job_type, "extras": extras}}, indent=2)
+            + "\n```\n"
+        )
+    return body
 
 
 def encode_local_images(paths: Optional[List[str]], *, limit: int = 2) -> List[Dict[str, str]]:

@@ -66,3 +66,25 @@ def test_client_dist_mount_path():
     if dist.is_dir():
         assert (dist / "index.html").is_file() or True
     assert dist.name == "dist"
+
+
+def test_ha_job_envelope_is_natural_language():
+    from server.home_agent.jobs import build_job_envelope
+
+    text = build_job_envelope(job_type="still", prompt="neon stage still")
+    assert "neon stage still" in text
+    assert "```json" not in text  # no extras → no JSON fence
+    with_extras = build_job_envelope(
+        job_type="h3_r2v", prompt="sing", extras={"duration": 4}
+    )
+    assert "lip-sync" in with_extras.lower() or "H3" in with_extras
+    assert "scenemux" in with_extras
+
+
+def test_ha_default_url_port():
+    from server.home_agent.client import HomeAgentClient
+
+    c = HomeAgentClient(base_url=None, password="")
+    # Env may override; when unset, client defaults to 8765
+    if not __import__("os").getenv("HOME_AGENT_URL"):
+        assert ":8765" in c.base_url or c.base_url.endswith(":8765")

@@ -111,7 +111,7 @@ PROJECT = {
             },
             "home_agent_url": {
                 "type": "string",
-                "description": "AI Playground Home Agent base URL for video_backend/stills_backend/director_backend=home_agent (e.g. http://192.168.1.40:8777). Defaults to the plugin's home_agent_url setting.",
+                "description": "AI Playground Home Agent base URL for video_backend/stills_backend/director_backend=home_agent (e.g. http://192.168.1.40:8765). Defaults to the plugin's home_agent_url setting.",
             },
             "hermes_url": {
                 "type": "string",

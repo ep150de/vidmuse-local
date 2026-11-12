@@ -109,7 +109,7 @@ VITE_SERVER_URL=http://localhost:8000 npm run dev
 docker compose up -d
 
 # Place GGUF models in models/ and ComfyUI checkpoints under ComfyUI/models/
-# For AI Playground: point COMFYUI_URL / studio Comfy URL at :8188; Home Agent often :8777
+# For AI Playground: Comfy :8188; Home Agent Local web default :8765
 cd client && npm install
 VITE_SERVER_URL=http://localhost:8000 npm run dev
 ```

@@ -462,11 +462,23 @@ class VidMuseAPI {
     return parseJson(res);
   }
 
-  async diagnoseHomeAgent(url: string): Promise<any> {
+  async diagnoseHomeAgent(
+    url: string,
+    options?: {
+      password?: string;
+      probe_comfy?: boolean;
+      comfy_url?: string;
+    }
+  ): Promise<any> {
     const res = await fetch(`${SERVER_URL}/api/home-agent/diagnose`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({
+        url,
+        password: options?.password || "",
+        probe_comfy: options?.probe_comfy ?? true,
+        comfy_url: options?.comfy_url || undefined,
+      }),
     });
     return parseJson(res);
   }

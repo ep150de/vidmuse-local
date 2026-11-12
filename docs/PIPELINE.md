@@ -25,7 +25,7 @@ See [ENGINES.md](ENGINES.md) for engine limits and the Arc / Playground matrix.
 **Simple UI** shows Cloud · Playground · Hybrid Fast · Fast Draft · Custom.  
 **Advanced** unlocks full lanes, Comfy/HA/Hermes URLs, engine picker, and health chips.
 
-Playground weights: set **Video host** to Playground/LAN Comfy and `comfy_url` to the Playground Comfy port (often `:8188`). Home Agent local-web is a separate URL (often `:8777`).
+Playground weights: set **Video host** to Playground/LAN Comfy and `comfy_url` to the Playground Comfy port (often `:8188`). Home Agent local-web is a separate URL (default `:8765`).
 
 ## Hermes
 

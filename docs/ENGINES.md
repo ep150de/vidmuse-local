@@ -50,7 +50,7 @@ Recommended test matrix:
 1. **Playground** — HA director + local Comfy URL for LTX or FastH3 drafts  
 2. **Hybrid Fast** — PERF on base H3 if weights fit; else FastH3 draft only  
 3. Keep **Cloud** H3 for quality lip sync when local VRAM/time is tight  
-4. Firewall: Home Agent local-web (often `:8777`) + Comfy `:8188` — see [HOME_AGENT.md](HOME_AGENT.md)
+4. Firewall: Home Agent local-web (default `:8765`) + Comfy `:8188` — see [HOME_AGENT.md](HOME_AGENT.md)
 
 Prefer fp8 / FastH3 int8 / distilled LTX weights on Arc. Documented in health `video_models` probes.
 

@@ -99,11 +99,56 @@ class HomeAgentClient:
         return host, int(port)
 
     async def diagnose(self, connect_timeout: float = 5.0) -> Dict[str, Any]:
-        """TCP reachability probe (no password). Used by UI Diagnose."""
+        """TCP-only probe (back-compat). Prefer diagnose_lan for full checks."""
+        return await self.diagnose_lan(
+            password="",
+            probe_comfy=False,
+            connect_timeout=connect_timeout,
+        )
+
+    async def diagnose_lan(
+        self,
+        *,
+        password: str = "",
+        probe_comfy: bool = True,
+        comfy_url: Optional[str] = None,
+        connect_timeout: float = 5.0,
+    ) -> Dict[str, Any]:
+        """Multi-step LAN diagnose for AI Playground Home Agent local-web.
+
+        Steps: parse → TCP → HTTP → login (if password) → SSE → optional Comfy.
+        Aligns with TNG/AI-Playground local-web (default port 8765).
+        """
         host, port = self._parse_host_port(self.base_url)
-        started = time.monotonic()
+        steps: List[Dict[str, Any]] = []
+        hints: List[str] = []
+        started_all = time.monotonic()
+
+        loopback = host in ("127.0.0.1", "localhost", "::1")
+        steps.append(
+            {
+                "id": "parse",
+                "ok": True,
+                "detail": f"{host}:{port}",
+                "warning": (
+                    "URL points at loopback — only works if SceneMux runs on the "
+                    "same machine as Playground. From another PC/Crostini, use the "
+                    "LAN IP shown in Local web (Allow LAN), or SSH -L tunnel."
+                    if loopback
+                    else None
+                ),
+            }
+        )
+        if loopback:
+            hints.append(
+                f"Loopback URL: if SceneMux is remote, paste Playground's LAN URL "
+                f"(Allow LAN) or tunnel: ssh -N -L {port}:127.0.0.1:{port} user@playground"
+            )
+
+        # TCP
         tcp_ok = False
-        error = ""
+        tcp_err = ""
+        t0 = time.monotonic()
         try:
             conn = asyncio.open_connection(host, port)
             reader, writer = await asyncio.wait_for(conn, timeout=connect_timeout)
@@ -115,26 +160,227 @@ class HomeAgentClient:
                 pass
             del reader
         except Exception as exc:
-            error = str(exc).strip() or type(exc).__name__
-        elapsed = round((time.monotonic() - started) * 1000)
-        hint = ""
+            tcp_err = str(exc).strip() or type(exc).__name__
+        tcp_ms = round((time.monotonic() - t0) * 1000)
+        steps.append(
+            {
+                "id": "tcp",
+                "ok": tcp_ok,
+                "latency_ms": tcp_ms,
+                "detail": "open" if tcp_ok else tcp_err,
+            }
+        )
         if not tcp_ok:
-            hint = (
-                f"Host {host} did not accept TCP on port {port} from this SceneMux "
-                "machine (ping can still succeed). On the Playground PC: enable "
-                "Local web → Allow LAN, then open Windows Firewall inbound TCP for "
-                f"that port. ChromeOS Linux (Crostini) often needs Tailscale or an "
-                f"SSH tunnel; then use http://127.0.0.1:{port}."
+            hints.append(
+                f"TCP {host}:{port} refused from this machine (ping can still work). "
+                "On Playground: Home Agent → Local web → start + Allow LAN; Windows "
+                f"Firewall inbound TCP {port}. Default local-web port is 8765 "
+                "(not Comfy :8188)."
             )
+            return {
+                "status": "unreachable",
+                "ok": False,
+                "url": self.base_url,
+                "host": host,
+                "port": port,
+                "tcp_ok": False,
+                "latency_ms": tcp_ms,
+                "steps": steps,
+                "hints": hints,
+                "error": tcp_err or "TCP failed",
+                "hint": hints[-1] if hints else None,
+            }
+
+        # HTTP — local-web serves a chat page at /
+        http_ok = False
+        http_detail = ""
+        t0 = time.monotonic()
+        try:
+            timeout = aiohttp.ClientTimeout(total=connect_timeout + 2)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(self.base_url + "/") as resp:
+                    http_ok = resp.status < 500
+                    http_detail = f"HTTP {resp.status}"
+        except Exception as exc:
+            http_detail = str(exc).strip() or type(exc).__name__
+        steps.append(
+            {
+                "id": "http",
+                "ok": http_ok,
+                "latency_ms": round((time.monotonic() - t0) * 1000),
+                "detail": http_detail,
+            }
+        )
+        if not http_ok:
+            hints.append(
+                "Port is open but HTTP failed — confirm Local web is the service "
+                "on this port (not raw Comfy). Use the URL from Playground's "
+                "Local web setup screen."
+            )
+
+        login_ok: Optional[bool] = None
+        sse_ok: Optional[bool] = None
+        pwd = (password or self.password or "").strip()
+        # Keep inner spaces (Playground passphrase semantics); only ends trimmed.
+
+        if pwd:
+            t0 = time.monotonic()
+            try:
+                await self.login(pwd)
+                login_ok = True
+                steps.append(
+                    {
+                        "id": "login",
+                        "ok": True,
+                        "latency_ms": round((time.monotonic() - t0) * 1000),
+                        "detail": "session cookie ok",
+                    }
+                )
+            except HomeAgentError as exc:
+                login_ok = False
+                steps.append(
+                    {
+                        "id": "login",
+                        "ok": False,
+                        "latency_ms": round((time.monotonic() - t0) * 1000),
+                        "detail": str(exc),
+                        "code": exc.code,
+                    }
+                )
+                if exc.code == "auth":
+                    hints.append(
+                        "Login failed — check Local web password (inner spaces matter; "
+                        "only trim ends). Wait if locked out after too many tries (429)."
+                    )
+                else:
+                    hints.append(str(exc))
+
+            if login_ok:
+                t0 = time.monotonic()
+                sse_detail = ""
+                try:
+                    timeout = aiohttp.ClientTimeout(total=8)
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.get(
+                            f"{self.base_url}/api/events",
+                            headers=self._headers(),
+                        ) as resp:
+                            if resp.status == 401:
+                                sse_ok = False
+                                sse_detail = "SSE unauthorized"
+                            elif resp.status >= 400:
+                                sse_ok = False
+                                sse_detail = f"SSE HTTP {resp.status}"
+                            else:
+                                # Read a tiny bit or short wait — connection accepted
+                                try:
+                                    await asyncio.wait_for(
+                                        resp.content.read(1), timeout=1.5
+                                    )
+                                except asyncio.TimeoutError:
+                                    pass
+                                sse_ok = True
+                                sse_detail = "SSE stream accepted"
+                except Exception as exc:
+                    sse_ok = False
+                    sse_detail = str(exc).strip() or type(exc).__name__
+                steps.append(
+                    {
+                        "id": "sse",
+                        "ok": bool(sse_ok),
+                        "latency_ms": round((time.monotonic() - t0) * 1000),
+                        "detail": sse_detail,
+                    }
+                )
+                if not sse_ok:
+                    hints.append(
+                        "Login worked but SSE /api/events failed — SceneMux needs "
+                        "SSE before chat (open stream, then POST /api/chat)."
+                    )
+                try:
+                    await self.logout()
+                except Exception:
+                    pass
+        else:
+            steps.append(
+                {
+                    "id": "login",
+                    "ok": None,
+                    "detail": "skipped (no password) — enter LAN password for full check",
+                }
+            )
+            steps.append(
+                {
+                    "id": "sse",
+                    "ok": None,
+                    "detail": "skipped (needs login)",
+                }
+            )
+
+        # Optional Comfy on same host (Playground weights)
+        comfy: Optional[Dict[str, Any]] = None
+        if probe_comfy:
+            from urllib.parse import urlparse
+
+            raw_comfy = (comfy_url or "").strip() or f"http://{host}:8188"
+            parsed = urlparse(
+                raw_comfy if "://" in raw_comfy else f"http://{raw_comfy}"
+            )
+            chost = parsed.hostname or host
+            cport = parsed.port or 8188
+            cbase = f"{parsed.scheme or 'http'}://{chost}:{cport}"
+            comfy_ok = False
+            comfy_detail = ""
+            t0 = time.monotonic()
+            try:
+                timeout = aiohttp.ClientTimeout(total=4)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(f"{cbase}/system_stats") as resp:
+                        comfy_ok = resp.status < 500
+                        comfy_detail = f"HTTP {resp.status}"
+            except Exception as exc:
+                comfy_detail = str(exc).strip() or type(exc).__name__
+            comfy = {
+                "url": cbase,
+                "ok": comfy_ok,
+                "detail": comfy_detail,
+                "latency_ms": round((time.monotonic() - t0) * 1000),
+            }
+            steps.append(
+                {
+                    "id": "comfy",
+                    "ok": comfy_ok,
+                    "latency_ms": comfy["latency_ms"],
+                    "detail": f"{cbase} — {comfy_detail}",
+                }
+            )
+            if not comfy_ok:
+                hints.append(
+                    f"Comfy at {cbase} not reachable — Hybrid Fast / H3 weights need "
+                    "Playground Comfy (:8188) with Allow LAN / firewall, separate from "
+                    f"Home Agent local-web (:{port})."
+                )
+
+        critical_ok = tcp_ok and http_ok
+        if pwd:
+            critical_ok = critical_ok and bool(login_ok) and bool(sse_ok)
+        status = "ok" if critical_ok else ("partial" if tcp_ok else "unreachable")
         return {
-            "status": "ok" if tcp_ok else "unreachable",
+            "status": status,
+            "ok": critical_ok,
             "url": self.base_url,
             "host": host,
             "port": port,
             "tcp_ok": tcp_ok,
-            "latency_ms": elapsed,
-            "error": error or None,
-            "hint": hint or None,
+            "http_ok": http_ok,
+            "login_ok": login_ok,
+            "sse_ok": sse_ok,
+            "comfy": comfy,
+            "latency_ms": round((time.monotonic() - started_all) * 1000),
+            "steps": steps,
+            "hints": hints,
+            "error": None if critical_ok else (hints[0] if hints else "diagnose failed"),
+            "hint": hints[0] if hints else None,
         }
 
     async def login(self, password: Optional[str] = None) -> None:

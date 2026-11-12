@@ -93,7 +93,7 @@ deliver the MP4 (and 9:16 on request).
 - `director_backend=hermes` fails → the Hermes API server is not up: doctor
   reports `hermes_director.reachable`. Fix: `API_SERVER_ENABLED=true` +
   `API_SERVER_KEY` in `~/.hermes/.env`, then `hermes gateway`.
-- Home Agent port (e.g. `:8777`) ≠ Comfy port (`:8188`).
+- Home Agent port (e.g. `:8765`) ≠ Comfy port (`:8188`).
 - The server itself reads its own `.env` when run manually (docker compose
   auto-loads the repo `.env`); the *plugin* always supplies credentials via
   the environment it spawns, and never reads credential files.

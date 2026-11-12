@@ -58,7 +58,7 @@ assemble.
   CPU-only host pick a local model that answers quickly (<=~14B). 30B+ models
   on CPU time out on every call (character lock, prompt polish) and the plan
   degrades to fallback prompts. `scenemux_doctor` reports the configured model.
-- Home Agent port (e.g. `:8777`) is NOT the Comfy port (`:8188`).
+- Home Agent port (e.g. `:8765`) is NOT the Comfy port (`:8188`).
 - Engine quality: H3 Ref2VA = true phoneme lip sync (finals); FastH3 / LTX =
   fast drafts, not Ref2VA. The `fast_draft` preset renders on LOCAL Comfy (needs
   a GPU host) — on a plain CPU machine use the `cloud` preset with

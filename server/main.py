@@ -594,17 +594,34 @@ def _home_agent_http_status(exc: Exception) -> int:
 
 @app.post("/api/home-agent/diagnose")
 async def home_agent_diagnose(request: dict):
-    """TCP reachability probe for Home Agent local-web (no password)."""
+    """LAN diagnose for AI Playground Home Agent local-web (+ optional Comfy).
+
+    Without password: TCP + HTTP. With password: also login + SSE.
+    ``probe_comfy`` (default true) checks Playground Comfy on the same host :8188
+    or ``comfy_url`` when provided.
+    """
     from server.home_agent.client import HomeAgentClient, HomeAgentError
 
     url = str(
         request.get("url") or os.getenv("HOME_AGENT_URL") or ""
     ).strip().rstrip("/")
+    # Trim ends only — local-web passphrases may contain spaces
+    password = str(
+        request.get("password") or os.getenv("HOME_AGENT_PASSWORD") or ""
+    ).strip()
     if not url:
         raise HTTPException(status_code=400, detail="Home Agent URL required")
-    client = HomeAgentClient(url, password="")
+    probe_comfy = request.get("probe_comfy")
+    if probe_comfy is None:
+        probe_comfy = True
+    comfy_url = str(request.get("comfy_url") or "").strip() or None
+    client = HomeAgentClient(url, password)
     try:
-        return await client.diagnose()
+        return await client.diagnose_lan(
+            password=password,
+            probe_comfy=bool(probe_comfy),
+            comfy_url=comfy_url,
+        )
     except HomeAgentError as exc:
         raise HTTPException(
             status_code=_home_agent_http_status(exc), detail=str(exc)
