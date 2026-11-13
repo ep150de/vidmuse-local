@@ -8,7 +8,10 @@ services:
       dockerfile: Dockerfile
     container_name: vidmuse-server
     ports:
-      - "8000:8000"
+      # Loopback-only: the studio server has no auth of its own and
+      # carries per-session API keys, so it must not be reachable from
+      # the LAN.
+      - "127.0.0.1:8000:8000"
     # host.docker.internal resolves on Docker Desktop (macOS/Windows) by
     # default; host-gateway makes it work on Linux too. Needed for the
     # hermes-director lane (HERMES_URL) and the Ollama/Comfy host fallbacks.
@@ -44,7 +47,8 @@ services:
     image: comfyanonymous/comfyui:latest
     container_name: vidmuse-comfyui
     ports:
-      - "8188:8188"
+      # Loopback-only for the same reason as the server above.
+      - "127.0.0.1:8188:8188"
     volumes:
       - ./ComfyUI:/root/comfyui
       - models:/root/comfyui/models

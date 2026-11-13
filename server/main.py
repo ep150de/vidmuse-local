@@ -74,9 +74,15 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─── APP ────────────────────────────────────────────────────────────────
 app = FastAPI(title="SceneMux Server", version="2.0.0")
+# The studio UI is served by this same app (same origin — no CORS needed
+# there); the only cross-origin caller is the Vite dev server on this
+# machine, so allow loopback dev origins only, never a wildcard.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

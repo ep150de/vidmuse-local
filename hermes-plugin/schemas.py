@@ -15,12 +15,7 @@ DOCTOR = {
     ),
     "parameters": {
         "type": "object",
-        "properties": {
-            "base_url": {
-                "type": "string",
-                "description": "Optional SceneMux server base URL override (defaults to the plugin's configured base URL, usually http://127.0.0.1:8000).",
-            },
-        },
+        "properties": {},
         "required": [],
     },
 }
@@ -35,7 +30,9 @@ SETUP = {
         "not already healthy, launches it via Docker (detached, log captured) "
         "and waits up to ~60s for it to come up; first runs may still be "
         "building the image, in which case re-run scenemux_doctor later. "
-        "Stores mode/base_url in the plugin settings."
+        "Stores mode in the plugin settings. The server base URL is the "
+        "plugin's base_url setting (default http://127.0.0.1:8000); tool "
+        "calls only reach loopback / host.docker.internal addresses."
     ),
     "parameters": {
         "type": "object",
@@ -48,10 +45,6 @@ SETUP = {
             "start_server": {
                 "type": "boolean",
                 "description": "Start the server if it is not already running (default true).",
-            },
-            "base_url": {
-                "type": "string",
-                "description": "Optional server base URL to configure and verify (default http://127.0.0.1:8000).",
             },
         },
         "required": [],
@@ -113,10 +106,6 @@ PROJECT = {
                 "type": "string",
                 "description": "AI Playground Home Agent base URL for video_backend/stills_backend/director_backend=home_agent (e.g. http://192.168.1.40:8765). Defaults to the plugin's home_agent_url setting.",
             },
-            "hermes_url": {
-                "type": "string",
-                "description": "Optional: base URL of the Hermes API server for director_backend=hermes. Default: auto — http://host.docker.internal:8642 when the SceneMux server runs in Docker on this machine (the Hermes API server on this host), http://127.0.0.1:8642 for a native server.",
-            },
             "video_model": {
                 "type": "string",
                 "enum": ["minimax-h3", "fasth3", "ltx23", "infinitetalk"],
@@ -175,10 +164,13 @@ RENDER = {
         "Render the storyboard to video and assemble the final music video. "
         "THIS SPENDS API CREDITS (Comfy Cloud / FAL / Home Agent per scene). "
         "The tool always returns a cost/time estimate first; the render only "
-        "starts when confirm=true. Workflow: call once WITHOUT confirm, show "
-        "the estimate to the user, get explicit approval, then call again "
-        "with confirm=true. Returns immediately (render runs asynchronously) — "
-        "poll with scenemux_status until download_url appears."
+        "starts when confirm=true — and a confirm=true call is escalated to a "
+        "Hermes human-approval prompt (the plugin's pre_tool_call spend gate), "
+        "so it cannot start without the user approving it at that gate. "
+        "Workflow: call once WITHOUT confirm, show the estimate to the user, "
+        "get explicit approval, then call again with confirm=true. Returns "
+        "immediately (render runs asynchronously) — poll with scenemux_status "
+        "until download_url appears."
     ),
     "parameters": {
         "type": "object",
@@ -209,7 +201,7 @@ RENDER = {
             },
             "confirm": {
                 "type": "boolean",
-                "description": "Set true ONLY after the user has explicitly approved the estimated spend. Default false = estimate-only, nothing renders.",
+                "description": "Set true ONLY after the user has explicitly approved the estimated spend. The call is then escalated to a Hermes human-approval prompt before the render starts. Default false = estimate-only, nothing renders.",
             },
         },
         "required": ["session_id"],

@@ -107,7 +107,48 @@ def _mode(ctx) -> str:
     return mode if mode in ("cloud", "local") else "cloud"
 
 
+def _host_of(url: str) -> str:
+    """Lowercase hostname of a URL — scheme-less ``host:port`` values
+    included (normalised to http:// first, so they can't slip past the
+    trust check as 'no host')."""
+    import urllib.parse
+
+    try:
+        u = str(url or "").strip()
+        if u and "://" not in u:
+            u = "http://" + u
+        return (urllib.parse.urlparse(u).hostname or "").lower()
+    except Exception:
+        return ""
+
+
+def _is_trusted_host(url: str) -> bool:
+    """True when a URL points at this machine: loopback, or the Docker
+    bridge name (host.docker.internal) that resolves back to this host.
+
+    Secrets (API keys, the Hermes API server key) and user files (audio,
+    reference images) only ever cross the wire to such hosts. Any other
+    destination would be a redirect chosen by the model and is refused.
+    """
+    return _host_of(url) in ("127.0.0.1", "localhost", "::1", "host.docker.internal", "")
+
+
 def _base_url(ctx, explicit: str = "") -> str:
+    """Resolve the studio base URL for a tool call.
+
+    ``explicit`` is model-supplied (a tool arg): only loopback /
+    host.docker.internal values are accepted — anything else would redirect
+    every call, and the files and secrets it carries, to a model-named host.
+    A non-local server is a *user* decision: set the plugin's ``base_url``
+    setting.
+    """
+    explicit = str(explicit or "").strip()
+    if explicit and not _is_trusted_host(explicit):
+        raise SceneMuxError(
+            "base_url '" + explicit + "' is not loopback — the scenemux tools only "
+            "talk to 127.0.0.1 / localhost / host.docker.internal. To point the "
+            "plugin at a server on another host, set the plugin's base_url setting."
+        )
     base = explicit or str(ctx.get_config("base_url", default=DEFAULT_BASE_URL) or DEFAULT_BASE_URL)
     return resolve_base_url(base)
 
@@ -187,19 +228,26 @@ def _local_ollama_model(timeout: float = 2.0) -> str:
 
 # ------------------------------------------------- server .env provisioning
 
-def _provision_server_env(root: Path) -> list:
+def _provision_server_env(root: Path, loopback_bind: bool = False) -> Dict[str, Any]:
     """Make the server this plugin launches able to find its credentials.
 
     The compose files load ``.env`` from the repo root into the container
     (``env_file: .env``), so the plugin writes the needed values there:
-    the four declared keys, taken from Hermes' secret scope, plus local
+    the declared keys, taken from Hermes' secret scope, plus local
     Ollama wiring when Ollama is running locally and no cloud LLM key
     exists (the director then runs free on the user's own machine).
 
-    Existing lines for those names are replaced, missing ones appended;
-    nothing else in the file is touched and nothing is ever read back into
-    plugin output. Returns the list of names written (for the report).
+    Secret safety: the file holds real keys in plaintext, so it is written
+    ONLY for a server whose published port is confirmed bound to
+    127.0.0.1 (``loopback_bind``) and is chmod'd 600 on POSIX. Nothing
+    else in the file is touched and nothing is ever read back into plugin
+    output. Returns ``{"written": [names], "skipped": reason-or-None}``.
     """
+    if not loopback_bind:
+        return {
+            "written": [],
+            "skipped": "the compose file does not publish the server port on 127.0.0.1",
+        }
     env_path = root / ".env"
     try:
         lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
@@ -248,8 +296,27 @@ def _provision_server_env(root: Path) -> list:
     try:
         env_path.write_text("\n".join(lines).rstrip("\n") + "\n", encoding="utf-8")
     except Exception:
+        return {"written": [], "skipped": "could not write the repo .env"}
+    try:
+        # Plaintext keys: owner read/write only where the OS honours it.
+        # POSIX: chmod 600. Windows: chmod is a no-op for ACLs, so best-effort
+        # restrict via icacls — grant the current user full control FIRST,
+        # then strip inherited ACEs (SYSTEM/Administrators): if the strip
+        # fails the file keeps its default ACL, and the owner can always
+        # still read/write. On failure the file keeps its default ACL (the
+        # server is loopback-bound, so this is defence-in-depth).
+        os.chmod(env_path, 0o600)
+        if os.name == "nt" and shutil.which("icacls"):
+            username = os.environ.get("USERNAME") or ""
+            if username:
+                subprocess.run(
+                    ["icacls", str(env_path),
+                     "/grant", f"{username}:F", "/inheritance:r"],
+                    capture_output=True, timeout=15,
+                )
+    except Exception:  # noqa: BLE001 - ACL restriction is best-effort
         pass
-    return written
+    return {"written": written, "skipped": None}
 
 
 def _server_alive(base: str) -> bool:
@@ -278,13 +345,7 @@ def _http_reachable(url: str, timeout: float = 4.0) -> bool:
 
 def _loopback_base(base: str) -> bool:
     """True when a SceneMux base URL points at this machine."""
-    import urllib.parse
-
-    try:
-        host = (urllib.parse.urlparse(base).hostname or "").lower()
-    except Exception:
-        return False
-    return host in ("127.0.0.1", "localhost", "::1", "")
+    return _host_of(base) in ("127.0.0.1", "localhost", "::1", "")
 
 
 def _hermes_urls(ctx, explicit: str = "") -> tuple:
@@ -293,13 +354,21 @@ def _hermes_urls(ctx, explicit: str = "") -> tuple:
     ``probe_url`` is what the plugin probes from the host: the Hermes API
     server runs on this machine, so ``127.0.0.1:8642`` is always the right
     form. ``server_url`` is what the SceneMux server uses to reach the API
-    server. An explicit value (tool arg or plugin setting) is used as-is.
-    Otherwise: when the SceneMux server is expected to run in Docker on this
-    machine (loopback base), ``host.docker.internal:8642`` reaches the host;
-    for a remote base, leave it empty so the server falls back to its own
+    server. A non-local value is only ever taken from the plugin's
+    ``hermes_url`` setting (a user decision) — a model-supplied ``explicit``
+    is only accepted when loopback / host.docker.internal. Otherwise: when
+    the SceneMux server is expected to run in Docker on this machine
+    (loopback base), ``host.docker.internal:8642`` reaches the host; for a
+    remote base, leave it empty so the server falls back to its own
     HERMES_URL env / default.
     """
     explicit = str(explicit or "").strip().rstrip("/")
+    if explicit and not _is_trusted_host(explicit):
+        raise SceneMuxError(
+            "hermes_url '" + explicit + "' is not loopback — the Hermes API key is "
+            "never sent to a non-local host. To direct the server at a Hermes API "
+            "server on another machine, set the plugin's hermes_url setting."
+        )
     if explicit:
         return explicit, explicit
     cfg = str(ctx.get_config("hermes_url", default="") or "").strip().rstrip("/")
@@ -336,13 +405,33 @@ def _start_server(ctx, mode: str, base: str) -> Dict[str, Any]:
             ),
         }
 
-    # The plugin supplies credentials to the server it spawns: compose
-    # files load ./env into the container, so the declared keys (from
-    # Hermes' secret scope) are provisioned into that file, alongside
-    # local-Ollama wiring when a local LLM is available.
-    provisioned = _provision_server_env(root)
-    env = dict(os.environ)
-    for name, _ in ALL_KEYS:
+    # Credentials reach the server through the repo .env (compose
+    # ``env_file``), provisioned from Hermes' secret scope — and only when
+    # the compose file publishes the port on 127.0.0.1 (the bundled files
+    # do). The .env holds plaintext keys, so it is never written for a
+    # server that could be reachable on other interfaces.
+    try:
+        compose_text = compose.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        compose_text = ""
+    loopback_bind = "127.0.0.1:" in compose_text
+    provisioned = _provision_server_env(root, loopback_bind=loopback_bind)
+
+    # Explicit MINIMAL environment for ``docker compose`` — never the
+    # agent's full environment (it carries keys and settings for other
+    # tools and profiles): PATH/HOME (USERPROFILE on Windows) so the
+    # docker CLI runs, DOCKER_*/XDG_RUNTIME_DIR for the CLI's socket and
+    # config plumbing (incl. rootless), COMPOSE_* user overrides, and only
+    # the declared keys the launched server uses.
+    env = {}
+    for name in ("PATH", "HOME", "USERPROFILE", "XDG_RUNTIME_DIR"):
+        if os.environ.get(name):
+            env[name] = os.environ[name]
+    for name, value in os.environ.items():
+        if name.startswith(("DOCKER_", "COMPOSE_")):
+            env[name] = value
+    for name in ("COMFY_CLOUD_API_KEY", "OLLAMA_API_KEY", "OPENCODE_API_KEY",
+                 "FAL_KEY", "HOME_AGENT_PASSWORD"):
         value = _secret(name)
         if value:
             env[name] = value
@@ -377,8 +466,17 @@ def _start_server(ctx, mode: str, base: str) -> Dict[str, Any]:
         "log": str(log_file),
         "note": "First run builds the image; that can take several minutes.",
     }
-    if provisioned:
-        out["server_env"] = "Provisioned into the repo .env (server config): " + ", ".join(provisioned)
+    if provisioned.get("written"):
+        out["server_env"] = (
+            "Provisioned into the repo .env (server config, chmod 600, "
+            "loopback-only server): " + ", ".join(provisioned["written"])
+        )
+    if provisioned.get("skipped"):
+        out["server_env_note"] = (
+            "Credentials were NOT written to the repo .env: "
+            + provisioned["skipped"]
+            + ". Supply the keys through the server's own environment instead."
+        )
 
     deadline = time.time() + HEALTH_WAIT_SECONDS
     last_error = ""
@@ -422,7 +520,7 @@ def make_doctor(ctx) -> Callable[..., str]:
                 report["server"] = {"reachable": False, "error": str(e)}
                 report["hints"].append(
                     "Server not reachable — run scenemux_setup to start it, "
-                    "or pass base_url if it runs elsewhere."
+                    "or set the plugin's base_url setting if it runs elsewhere."
                 )
 
             if report["server"].get("reachable"):
@@ -493,9 +591,10 @@ def make_setup(ctx) -> Callable[..., str]:
                 return json.dumps({"error": "mode must be 'cloud' or 'local'"})
             ctx.set_config("mode", mode)
 
+            # A model-supplied base_url is accepted only when loopback and is
+            # NEVER persisted: the durable base_url is the plugin setting the
+            # user controls.
             base = _base_url(ctx, str(args.get("base_url") or ""))
-            if args.get("base_url"):
-                ctx.set_config("base_url", base)
 
             result: Dict[str, Any] = {"mode": mode, "base_url": base, "keys": _key_report(mode)}
 
@@ -563,7 +662,7 @@ def _remember_session(sid: str, info: Dict[str, Any]) -> None:
 def _down_error(base: str, mode: str) -> str:
     return json.dumps({
         "error": f"SceneMux server not reachable at {base}.",
-        "fix": "Run scenemux_setup (mode: " + mode + ") to start it, or pass base_url if it runs elsewhere.",
+        "fix": "Run scenemux_setup (mode: " + mode + ") to start it, or set the plugin's base_url setting if the server runs elsewhere.",
     })
 
 
@@ -642,6 +741,17 @@ def make_project(ctx) -> Callable[..., str]:
             video_backend = str(args.get("video_backend") or "").strip()
             stills_backend = str(args.get("stills_backend") or "").strip()
             director_backend = str(args.get("director_backend") or "").strip().lower()
+            # Secrets only ever leave for a studio server on this machine.
+            base_is_local = _is_trusted_host(base)
+            notes: list = []
+            arg_hermes_url = str(args.get("hermes_url") or "").strip()
+            if arg_hermes_url and not _is_trusted_host(arg_hermes_url):
+                return json.dumps({
+                    "error": "hermes_url '" + arg_hermes_url + "' is not loopback — the "
+                             "Hermes API key is never sent to a non-local host.",
+                    "fix": "Set the plugin's hermes_url setting if the Hermes API server "
+                           "runs on another machine (a user decision, not a tool arg).",
+                })
             hermes_server_url = ""
             hermes_key = ""
             if director_backend == "hermes":
@@ -653,9 +763,9 @@ def make_project(ctx) -> Callable[..., str]:
                                "(the key the Hermes gateway's API server authenticates with), make sure "
                                "the gateway is running (hermes gateway), then re-run scenemux_project.",
                     })
-                hermes_server_url, hermes_probe_url = _hermes_urls(ctx, str(args.get("hermes_url") or ""))
-                if args.get("hermes_url"):
-                    ctx.set_config("hermes_url", hermes_server_url)
+                # hermes_url comes from the plugin setting only — never a
+                # (persistable) tool arg.
+                hermes_server_url, hermes_probe_url = _hermes_urls(ctx)
                 if not _http_reachable(hermes_probe_url + "/health", timeout=4.0):
                     return json.dumps({
                         "error": "The Hermes API server is not reachable at " + hermes_probe_url +
@@ -698,14 +808,35 @@ def make_project(ctx) -> Callable[..., str]:
             if home_agent_url:
                 cfg["home_agent_url"] = home_agent_url
                 home_agent_password = _secret("HOME_AGENT_PASSWORD")
-                if home_agent_password:
+                if home_agent_password and base_is_local:
                     cfg["home_agent_password"] = home_agent_password
+                elif home_agent_password:
+                    notes.append(
+                        "HOME_AGENT_PASSWORD was NOT sent to the non-loopback studio "
+                        "server. Set HOME_AGENT_PASSWORD in the server's own "
+                        "environment/.env instead."
+                    )
             if director_backend == "hermes":
                 if hermes_server_url:
                     cfg["hermes_url"] = hermes_server_url
-                # Always send the token per session; the server also falls
-                # back to its HERMES_TOKEN env for URL resolution.
-                cfg["hermes_token"] = hermes_key
+                # The API server key unlocks the whole local agent, so it is
+                # sent only when both ends are this machine: the studio
+                # server is local, and the URL the server will dial is
+                # loopback/host.docker.internal (or empty — then the server
+                # uses its HERMES_TOKEN env, which the plugin only ever
+                # writes for a loopback-bound server).
+                token_local = base_is_local and (
+                    not hermes_server_url or _is_trusted_host(hermes_server_url)
+                )
+                if token_local:
+                    cfg["hermes_token"] = hermes_key
+                else:
+                    notes.append(
+                        "The Hermes API key was NOT sent (studio server or hermes_url "
+                        "is not loopback/host.docker.internal). Put HERMES_URL + "
+                        "HERMES_TOKEN in the server's own environment if the "
+                        "hermes-director lane should work this way."
+                    )
             cfg["creative_direction"] = direction
             try:
                 cfg_res = _call(ctx, args, "/api/session/config", cfg, timeout=client.READ_TIMEOUT)
@@ -762,6 +893,7 @@ def make_project(ctx) -> Callable[..., str]:
                 "references_uploaded": refs_uploaded,
                 "preset": preset or "server-default",
                 "pipeline": lanes,
+                "notes": notes or None,
                 "next": "scenemux_plan with this session_id to build the storyboard; show the scene list to the user BEFORE any render.",
             })
         except Exception as e:  # noqa: BLE001
@@ -846,6 +978,27 @@ def make_plan(ctx) -> Callable[..., str]:
     return handler
 
 
+# Last spend estimate per session. The pre_tool_call spend gate (see
+# __init__.py) reads this so the human-approval prompt can quote what the
+# render will cost.
+_RENDER_ESTIMATES: Dict[str, Dict[str, Any]] = {}
+
+
+def _remember_render_estimate(sid: str, est: Any) -> None:
+    if isinstance(est, dict):
+        _RENDER_ESTIMATES[sid] = est
+        if len(_RENDER_ESTIMATES) > 200:  # bounded: drop the oldest
+            oldest = next(iter(_RENDER_ESTIMATES))
+            if oldest != sid:
+                _RENDER_ESTIMATES.pop(oldest, None)
+
+
+def get_render_estimate(sid: str) -> Dict[str, Any]:
+    """Last spend estimate recorded for ``sid`` (for the spend-gate hook)."""
+    est = _RENDER_ESTIMATES.get(sid)
+    return est if isinstance(est, dict) else {}
+
+
 def make_render(ctx) -> Callable[..., str]:
     def handler(args: dict, **kwargs) -> str:
         try:
@@ -869,6 +1022,7 @@ def make_render(ctx) -> Callable[..., str]:
                 })
 
             est = _call(ctx, args, "/api/studio/estimate", {"session_id": sid}, timeout=60)
+            _remember_render_estimate(sid, est)
 
             if not bool(args.get("confirm", False)):
                 return json.dumps({
@@ -877,7 +1031,7 @@ def make_render(ctx) -> Callable[..., str]:
                     "estimate": est,
                     "queue": queue,
                     "spend_warning": "Rendering will SPEND API credits per the estimate above (video model + stills backends).",
-                    "next": "Present the estimate to the user. Only after EXPLICIT user approval, call scenemux_render again with confirm=true. Never set confirm yourself.",
+                    "next": "Present the estimate to the user. Only after EXPLICIT user approval, call scenemux_render again with confirm=true — that call is escalated to a Hermes human-approval prompt (the plugin's spend gate), so the render cannot start without the user approving it.",
                 })
 
             payload: Dict[str, Any] = {"session_id": sid, "rebuild_plan": bool(args.get("rebuild_plan", False))}

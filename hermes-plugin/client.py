@@ -65,7 +65,8 @@ def _request(
         reason = str(getattr(e, "reason", e))
         raise SceneMuxError(
             f"Cannot reach SceneMux server at {url} ({reason}). "
-            "Is it running? Run scenemux_setup, or pass base_url if it runs elsewhere."
+            "Is it running? Run scenemux_setup, or set the plugin's base_url setting "
+            "if the server runs elsewhere."
         ) from e
     except TimeoutError:
         raise SceneMuxError(
