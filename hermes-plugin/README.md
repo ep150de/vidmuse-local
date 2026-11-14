@@ -60,7 +60,8 @@ point `base_url` at it (see Setup).
    hermes gateway
    ```
    The plugin reads `API_SERVER_KEY` through the secret scope and sends it to
-   the server per session — no extra configuration per project. `scenemux_doctor`
+   the server per session (only when the studio server is on loopback) — no
+   extra configuration per project. `scenemux_doctor`
    reports whether the API server is configured and reachable.
 4. **Check** — `scenemux_doctor` tells you exactly what's missing, if anything.
 
@@ -73,16 +74,25 @@ deliver the MP4 (and 9:16 on request).
 
 ## Security & disclosure
 
-- **Network calls** to: the SceneMux server (localhost by default), Comfy
-  Cloud, Ollama Cloud, OpenCode Go, FAL.ai (only the endpoints the server
-  uses with the keys you provide).
+- **Network calls** to: the SceneMux server (loopback by default; tool
+  calls to non-loopback hosts are refused), Comfy Cloud, Ollama Cloud,
+  OpenCode Go, FAL.ai (only the endpoints the server uses with the keys
+  you provide).
 - **Spawns a long-running process**: `docker compose up -d` for the SceneMux
-  server (detached, logs captured). It keeps running after the session ends.
+  server (detached, logs captured; published on `127.0.0.1` only, no
+  wildcard CORS). It keeps running after the session ends.
 - **Spend**: rendering consumes Comfy Cloud credits (and optional FAL
-  credits). Every render goes through an estimate + user confirmation.
+  credits). Every render goes through an estimate, and a `confirm=true`
+  call is escalated to a Hermes human-approval prompt (the plugin's
+  `pre_tool_call` spend gate) — the render cannot start without that
+  approval.
+- **Secrets** are read only through the Hermes secret scope, sent only to
+  loopback / `host.docker.internal` hosts, and written to the server's
+  `.env` (chmod 600) only for a 127.0.0.1-bound server. `docker compose`
+  is spawned with a minimal explicit environment, not Hermes's whole env.
 - **No telemetry, no analytics, no credential storage of its own.**
 - This plugin does not override any Hermes core behaviour; it only registers
-  tools and one skill.
+  its tools, its spend-gate hook, and one skill.
 
 ## Troubleshooting
 
